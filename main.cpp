@@ -20,11 +20,12 @@
 #include <ESPAsyncWebServer.h> // Bliblioteka asyncrhionicznego serwera web
 #include <AsyncTCP.h>          // Bliblioteka TCP dla serwera web
 #include <Update.h>            // Blibioteka dla aktulizacji OTA
-#include <ESPmDNS.h>
+#include <ESPmDNS.h>           // Blibioteka mDNS dla ESP
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.17.77"  // Wersja oprogramowania radia
-#define hostname "esp32radio"  // Definicja nazwy hosta widoczna na zewnątrz
+#define softwareRev "v3.17.90"  // Wersja oprogramowania radia
+#define hostname "esp32radio"   // Definicja nazwy hosta widoczna na zewnątrz
+
 
 // Definicja pinow czytnika karty SD
 #define SD_CS 47    // Pin CS (Chip Select) dla karty SD wybierany jako interfejs SPI
@@ -81,8 +82,7 @@
 #define STATIONS_URL16 "https://raw.githubusercontent.com/dzikakuna/ESP32_radio_streams/main/bank16.txt"  // Adres URL do pliku z listą stacji radiowych
 
 
-// ############### DEFINICJA DLA PILOTa IR w standardzie NEC ############### //
-
+// ############### DEFINICJA DLA PILOTa IR w standardzie NEC - przeniesiona do pliku txt na karcie ############### //
 uint16_t rcCmdVolumeUp = 0;   // Głosnosc +
 uint16_t rcCmdVolumeDown = 0; // Głośnosc -
 uint16_t rcCmdArrowRight = 0; // strzałka w prawo - nastepna stacja
@@ -121,7 +121,6 @@ int bankFromBuffer = 0;         // Numer aktualnie wybranego banku stacji z list
 int CLK_state2;                        // Aktualny stan CLK enkodera lewego
 int prev_CLK_state2;                   // Poprzedni stan CLK enkodera lewego
 int stationsCount = 0;                 // Aktualna liczba przechowywanych stacji w tablicy
-//int fileFromBuffer = 0;                // Numer aktualnie wybranego pliku do przywrócenia na ekran po bezczynności
 uint8_t volumeValue = 10;                  // Wartość głośności, domyślnie ustawiona na 10
 uint8_t maxVolume = 21;
 bool maxVolumeExt =  false;                 // 0(false) -  zakres standardowy Volume 1-21 , 1 (true) - zakres rozszerzony 0-42
@@ -133,7 +132,7 @@ int buttonShortPressTime2 = 500;       // Czas rekacjinna krótkie nacisniecie e
 int buttonSuperLongPressTime2 = 4000;  // Czas reakcji na super długie nacisniecie enkoder 2
 uint8_t stationNameLenghtCut = 24;    // 24-> 25 znakow, 25-> 26 znaków, zmienna określająca jak długa nazwę ma nazwa stacji w plikach Bankow liczone od 0- wartosci ustalonej
 
-// ---- Voice promt of Time every hour / Głosowe odtwarzanie czasu co godzinę ---- //
+// ---- Głosowe odtwarzanie czasu co godzinę ---- //
 bool voiceTimePlay = false; 
 bool voiceTimePlayActionTaken = false;
 bool timeVoiceInfoEveryHour = true;
@@ -163,19 +162,18 @@ uint8_t rcInputDigit1 = 0xFF;      // Pierwsza cyfra w przy wprowadzaniu numeru 
 uint8_t rcInputDigit2 = 0xFF;      // Druga cyfra w przy wprowadzaniu numeru stacji z pilota
 
 
-// ---- Config ---- // - prototype function for config storage
+// ---- Zmienne konfiguracji ---- //
 uint16_t configArray[16] = { 0 };
 uint8_t rcPage = 0;
-uint16_t configRemoteArray[30] = { 0 };  // Tablica przechowująca kody pilota podczas odczytu z pliku
-uint16_t configAdcArray[20] = { 0 };
-bool configExist = true;
+uint16_t configRemoteArray[30] = { 0 };   // Tablica przechowująca kody pilota podczas odczytu z pliku
+uint16_t configAdcArray[20] = { 0 };      // Tablica przechowująca wartosci ADC dla przyciskow klawiatury
+bool configExist = true;                  // Flaga okreslajaca czy istnieje plik konfiguracji
 
 
 //const int maxVisibleLines = 5;  // Maksymalna liczba widocznych linii na ekranie OLED
 bool encoderButton2 = false;      // Flaga określająca, czy przycisk enkodera 2 został wciśnięty
 bool encoderFunctionOrder = true; // Flaga okreslająca kolejność funkcji enkodera 2
 bool displayActive = false;       // Flaga określająca, czy wyświetlacz jest aktywny
-//bool isPlaying = false;           // Flaga określająca, czy obecnie trwa odtwarzanie
 bool mp3 = false;                 // Flaga określająca, czy aktualny plik audio jest w formacie MP3
 bool flac = false;                // Flaga określająca, czy aktualny plik audio jest w formacie FLAC
 bool aac = false;                 // Flaga określająca, czy aktualny plik audio jest w formacie AAC
@@ -183,7 +181,6 @@ bool vorbis = false;              // Flaga określająca, czy aktualny plik audi
 bool id3tag = false;              // Flaga określająca, czy plik audio posiada dane ID3
 bool timeDisplay = true;          // Flaga określająca kiedy pokazać czas na wyświetlaczu, domyślnie od razu po starcie
 bool listedStations = false;      // Flaga określająca czy na ekranie jest pokazana lista stacji do wyboru
-//bool menuEnable = false;          // Flaga określająca czy na ekranie można wyświetlić menu
 bool bankMenuEnable = false;      // Flaga określająca czy na ekranie jest wyświetlone menu wyboru banku
 bool bitratePresent = false;      // Flaga określająca, czy na serial terminalu pojawiła się informacja o bitrate - jako ostatnia dana spływajaca z info
 bool bankNetworkUpdate = false;   // Flaga wyboru aktualizacji banku z sieci lub karty SD - True aktulizacja z NETu
@@ -198,7 +195,6 @@ bool audioInfoRefresh = false;    // Flaga wymuszjąca wymagane odsiwezenie ze w
 bool noSDcard = false;              // flaga ustawiana przy braku wykrycia karty SD
 bool resumePlay = false;            // Flaga wymaganego uruchomienia odtwarzania po zakonczeniu komunikatu głosowego
 bool fwupd = false;               // Flaga blokujaca main loop podczas aktualizacji oprogramowania
-//bool displayBufforSendRquest = false;
 bool configIrExist = false;       // Flaga informująca o istnieniu poprawnej konfiguracji pilota IR
 bool wsAudioRefresh = false;      // Flaga informujaca o potrzebe odswiezeninia Station Text za pomoca Web Sokcet
 
@@ -234,7 +230,6 @@ uint8_t vuMeterRefreshTime = 65;                // Czas w ms odswiezania VUmeter
 unsigned long currentTime = millis();
 unsigned long previousTime = 0;
 const long timeoutTime = 2000;
-bool bankChange = false;
 bool urlToPlay = false;
 
 // ---- Sprawdzenie funkcji pilota, zminnne do pomiaru róznicy czasów ---- //
@@ -244,25 +239,17 @@ unsigned long runTime2 = 0;
 
 
 String stationStringScroll = "";     // Zmienna przechowująca tekst do przewijania na ekranie
-//String stationStringWs = "";
-//String directories[MAX_FILES];       // Tablica z indeksami i ścieżkami katalogów
-//String currentDirectory = "/music";  // Ścieżka bieżącego katalogu
 String stationName;                  // Nazwa aktualnie wybranej stacji radiowej
 String stationString;                // Dodatkowe dane stacji radiowej (jeśli istnieją)
+String stationStringWeb;                // Dodatkowe dane stacji radiowej (jeśli istnieją)
 String bitrateString;                // Zmienna przechowująca informację o bitrate
 String sampleRateString;             // Zmienna przechowująca informację o sample rate
 String bitsPerSampleString;          // Zmienna przechowująca informację o liczbie bitów na próbkę
-//String artistString;                 // Zmienna przechowująca informację o wykonawcy
-//String titleString;                  // Zmienna przechowująca informację o tytule utworu
-//String fileNameString;               // Zmienna przechowująca informację o nazwie pliku
-//String folderNameString;             // Zmienna przechowująca informację o nazwie folderu
-//String PlayedFolderName;             // Nazwa aktualnie odtwarzanego folderu
 String currentIP;
 String stationNameStream;           // Nazwa stacji wyciągnieta z danych wysylanych przez stream
 
 String header;                      // Zmienna dla serwera www
 String sliderValue = "0";
-//String html = "";
 String url2play = "";
 
 
@@ -307,24 +294,9 @@ const char index_html[] PROGMEM = R"rawliteral(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESP32 Web Radio</title>
   <style>
-  @keyframes scroll-left {
-    0%% {
-      transform: translateX(100%%);
-    }
-    100%% {
-      transform: translateX(-100%%);
-    }
-  }
-  
-  .scroll-animate 
-  {
-    animation: scroll-left 30s linear infinite;
-    position: relative;
-  }
-
     html {font-family: Arial; display: inline-block; text-align: center;}
     h2 {font-size: 1.3rem;}
-    p {font-size: 1.1rem;}
+    p {font-size: 0.95rem;}
     table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
     td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
     td:hover {font-weight:bold;}
@@ -357,18 +329,20 @@ const char index_html[] PROGMEM = R"rawliteral(
   color: #AAA; width: 345px; text-align: center; white-space: nowrap; box-shadow: 0 0 20px #4CAF50;  ">
     
     <div style="margin-bottom: 10px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; -webkit-text-stroke: 0.3px black; text-stroke: 0.3px black;">
-      <span id="textStationName"><b>%STATIONNAMEVALUE%</b></span>
+      <span id="textStationName"><b>STATIONNAME</b></span>
     </div>
     
-    <div style="width: 345px; overflow: hidden; margin-bottom: 10px;">
-      <div id="stationTextDiv" style="display: inline-block; white-space: nowrap; position: relative; font-size: 1.0rem; color: #999; margin-bottom: 10px;">
-        <span id="stationText">%STATIONTEXT%</span>
+    <div style="width: 345px; margin-bottom: 10px;">
+      <div id="stationTextDiv" style="display: block; text-overflow: ellipsis; white-space: normal; font-size: 1.0rem; color: #999; margin-bottom: 10px; text-align: center; align-items: center; height: 4.2em; justify-content: center; overflow: hidden; line-height: 1.4em;">
+        <span id="stationText">STATIONTEXT</span>
       </div>
     </div>
+    
+    <div style="height: 1px; background-color: #4CAF50; margin: 5px 0;"></div>
 
     <div style="display: flex; justify-content: center; gap: 200px; font-size: 1.0rem; color: #999;">
-      <div><span id="stationNumber">Station: %STATIONNUMBER%</span></div>
-      <div><span id="bankValue">Bank: %BANKVALUE%</span></div>
+      <div><span id="bankValue">Bank: --</span></div>
+      <div><span id="stationNumber">Station: --</span></div>
     </div>
 
   </div>
@@ -377,41 +351,31 @@ const char index_html[] PROGMEM = R"rawliteral(
   <button class="button" onClick="displayMode()">OLED Display Mode</button>
   
         
-  <script>
+ <script>
+
+  var websocket;
+
   function updateSliderVolume(element) 
   {
     var sliderValue = document.getElementById("volumeSlider").value;
     document.getElementById("textSliderValue").innerText = sliderValue;
-    console.log(sliderValue);
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "/update?volume="+sliderValue, true);
-    xhr.send();
+
+    if (websocket && websocket.readyState === WebSocket.OPEN) 
+    {
+      websocket.send("volume:" + sliderValue);
+    } 
+    else 
+    {
+      console.warn("WebSocket niepołączony");
+    }
   }
 
-  function volume(x) 
-  {
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "/volume" + x, true);
-    xhr.send();
-    document.location.reload();
-  }
-
-  //function station(x) 
-  //{
-  //  var xhr = new XMLHttpRequest();
-  //  xhr.open("GET", "/station" + x, true);
-  //  xhr.send();
-  //  //document.location.reload();
-  //}
-  
   function stationLoad(x) 
   {
     connectWebSocket();
     var xhr = new XMLHttpRequest();
     xhr.open("GET", "/update?station=" + x, false);
     xhr.send();
-    //document.location.reload();
-    //window.location.href=window.location.href();
   }
   
   function bankLoad(x) 
@@ -420,131 +384,79 @@ const char index_html[] PROGMEM = R"rawliteral(
     var xhr = new XMLHttpRequest();
     xhr.open("GET", "/update?bank=" + x, true);
     xhr.send();
-    //document.location.reload();
-    //window.location.href=window.location.href();
-  }
+   }
  
   function displayMode() 
   {
     fetch("/displayMode")
   }
   
-  function checkStationTextLength() 
-  {
-      const stationTextElement = document.getElementById("stationText");
-      const stationTextDiv = document.getElementById("stationTextDiv");
-      const maxLength = 43; // Określa maksymalną liczbę znaków w okienku DIV
-
-      if (stationTextElement.innerText.length > maxLength) {
-        // Jeśli tekst jest długi, dodajemy animacje przewijania
-        stationTextDiv.classList.add("scroll-animate");
-      } 
-      else 
-      {
-        // Jeśli tekst jest krótki, usuwamy animacje
-        stationTextDiv.classList.remove("scroll-animate");
-      }
-      
-      //alert('Szerokość 1: ' + stationTextElement.innerText.length + '\nmaxLength: ' + maxLength);
-  }
-
-    // Uruchom funkcji przy załadowaniu strony
-    window.onload = checkStationTextLength;
-
-
+  
   function connectWebSocket() 
   {
-    let socket = new WebSocket('ws://' + window.location.hostname + '/ws');
+    websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
 
-    socket.onopen = function () 
+    websocket.onopen = function () 
     {
         console.log("WebSocket polaczony");
     };
     
-    socket.onclose = function (event) 
+    websocket.onclose = function (event) 
     {
         console.log("WebSocket zamkniety. Proba ponownego polaczenia za 3 sekundy...");
         setTimeout(connectWebSocket, 3000); // próba ponownego połączenia
     };
 
-    socket.onerror = function (error) 
+    websocket.onerror = function (error) 
     {
         console.error("Blad WebSocket: ", error);
-        socket.close(); // zamyka połączenie, by wywołać reconnect
+        websocket.close(); // zamyka połączenie, by wywołać reconnect
     };
-  
-  }
-
-  let previousBankValue = null;  // Zmienna do przechowywania poprzedniej wartości banku aby zapobiec petli odsweizania
-  
-  var socket = new WebSocket('ws://' + window.location.hostname + '/ws');
     
-  socket.onmessage = function(event) 
-  {
-    if (event.data === "reload") 
+    websocket.onmessage = function(event) 
     {
-      location.reload();
-    }  
-    
-    if (event.data.startsWith("volume:")) 
-    {
-      var vol = parseInt(event.data.split(":")[1]);
-      document.getElementById("volumeSlider").value = vol;
-      document.getElementById("textSliderValue").innerText = vol;
-    }
-  
-    if (event.data.startsWith("station:")) 
-    {
-      var station = parseInt(event.data.split(":")[1]);
-      highlightStation(station);
-      //document.getElementById('stationNumber').innerText = event.data.split(':')[1];
-      document.getElementById('stationNumber').innerText ='Station: ' + station; 
-    }
-    
-    if (event.data.startsWith("stationname:")) 
-    {
-      var value = event.data.split(":")[1];
-      document.getElementById("textStationName").innerHTML = `<b>${value}</b>`;
-      checkStationTextLength();
-    }  
-
-    if (event.data.startsWith("stationtext$")) 
-    {
-      var stationtext = event.data.split("$")[1];
-      document.getElementById("stationText").innerHTML = `${stationtext}`;
-      checkStationTextLength();
-    }  
-
-    //if (event.data.startsWith("volume:")) 
-    //{
-    //  var volume = event.data.split(":")[1];
-    //  document.getElementById("volumeSlider").innerText = volume;
-    //  document.getElementById("textSliderValue").innerText = volume;
-    //}  
-
-
-    if (event.data.startsWith("bank:")) 
-    {
-     var bankValue = parseInt(event.data.split(":")[1]);
-
-     if (bankValue !== previousBankValue) 
+      if (event.data === "reload") 
       {
-        document.getElementById('bankValue').innerText = 'Bank: ' + bankValue;
-        location.reload();  // Strona zostanie przeładowana
-        previousBankValue = bankValue;  // Zaktualizowanie poprzedniej wartości banku
+        location.reload();
+      }  
+      
+      if (event.data.startsWith("volume:")) 
+      {
+        var vol = parseInt(event.data.split(":")[1]);
+        document.getElementById("volumeSlider").value = vol;
+        document.getElementById("textSliderValue").innerText = vol;
       }
-    }    
+      
+      if (event.data.startsWith("station:")) 
+      {
+        var station = parseInt(event.data.split(":")[1]);
+        highlightStation(station);
+        //document.getElementById('stationNumber').innerText = event.data.split(':')[1];
+        document.getElementById('stationNumber').innerText ='Station: ' + station; 
+      }
+      
+      if (event.data.startsWith("stationname:")) 
+      {
+        var value = event.data.split(":")[1];
+        document.getElementById("textStationName").innerHTML = `<b>${value}</b>`;
+        //checkStationTextLength();
+      }  
 
+      if (event.data.startsWith("stationtext$")) 
+      {
+        var stationtext = event.data.split("$")[1];
+        document.getElementById("stationText").innerHTML = `${stationtext}`;
+        //checkStationTextLength();
+      }  
+
+      if (event.data.startsWith("bank:")) 
+      {
+        var bankValue = parseInt(event.data.split(":")[1]);
+        document.getElementById('bankValue').innerText = 'Bank: ' + bankValue;
+      }    
+    }
   };
-
-  // Funkcja do automatycznego zaznaczenia stacji po załadowaniu strony
-  //window.onload = function() 
-  //{
-  //  highlightStation(stationId);
-  //};
-
-
-
+  
   function highlightStation(stationId) 
   {
     // Usuń poprzednie zaznaczenia
@@ -582,7 +494,34 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
   }
   
-  </script>
+
+  document.addEventListener("DOMContentLoaded", function () 
+  {
+    connectWebSocket(); // podlaczamy websockety
+
+    const slider = document.getElementById("volumeSlider");
+    slider.addEventListener("wheel", function (event) 
+    {
+      event.preventDefault(); // zapobiega przewijaniu strony
+
+      let currentValue = parseInt(slider.value);
+      const step = parseInt(slider.step) || 1;
+      const max = parseInt(slider.max);
+      const min = parseInt(slider.min);
+
+      if (event.deltaY < 0) {
+        // przewijanie w górę (zwiększ)
+        slider.value = Math.min(currentValue + step, max);
+      } else {
+        // przewijanie w dół (zmniejsz)
+        slider.value = Math.max(currentValue - step, min);
+      }
+
+      updateSliderVolume(slider); // wywołaj aktualizację
+    });
+  });
+
+ </script>
 
 )rawliteral";
 
@@ -634,7 +573,7 @@ const char config_html[] PROGMEM = R"rawliteral(
   </head>
 
 <body>
-<h1>ESP32 Radio - Settings</h1>
+<h2>ESP32 Radio - Settings</h2>
 <form action="/configupdate" method="POST">
 <table class="tableSettings">
 <tr><th>Setting</th><th>Value</th></tr>
@@ -656,7 +595,7 @@ const char config_html[] PROGMEM = R"rawliteral(
 
 <tr><td>OLED Power Save Mode</td><td><select name="displayPowerSaveEnabled"><option value="1"%S9>On</option><option value="0"%S10>Off</option></select></td></tr>
 <tr><td>OLED Power Save Time (1-600sek.)</td><td><input type="number" name="displayPowerSaveTime" min="1" max="600" value="%D9"></td></tr>
-<tr><td>Max Volume Extended [0] range 1-21 or [1] range 1-42 </td><td><select name="maxVolumeExt"><option value="1"%11>On</option><option value="0"%S12>Off</option></select></td></tr>
+<tr><td>Max Volume Extended range -> 1-21 [Off], 1-42 [On]</td><td><select name="maxVolumeExt"><option value="1"%11>On</option><option value="0"%S12>Off</option></select></td></tr>
 </table>
 <input type="submit" value="Update">
 </form>
@@ -689,7 +628,7 @@ const char adc_html[] PROGMEM = R"rawliteral(
   </head>
 
 <body>
-<h1>ESP32 Radio - ADC Settings</h1>
+<h2>ESP32 Radio - ADC Settings</h2>
 <form action="/configadc" method="POST">
 <table class="tableSettings">
 <tr><th>Button</th><th>Value</th></tr>
@@ -772,19 +711,6 @@ const char menu_html[] PROGMEM = R"rawliteral(
   </body></html>
 
 )rawliteral";
-
-String processor(const String& var)
-{
-  //Serial.println(var);
-  //if (var == "SLIDERVALUE") {return String(volumeValue);}
-  
-  if (var == "STATIONNAMEVALUE") {return String(stationName.substring(0, stationNameLenghtCut));}
-  if (var == "BANKVALUE") {return String(bank_nr);}
-  if (var == "STATIONNUMBER") {return String(station_nr);}
-  if (var == "STATIONTEXT") {return String(stationStringScroll);}
-  return String();
-}
-
 
 char stations[MAX_STATIONS][STATION_NAME_LENGTH + 1];  // Tablica przechowująca linki do stacji radiowych (jedna na stację) +1 dla terminatora null
 
@@ -1247,7 +1173,6 @@ void readSDStations() {
 // Funkcja do pobierania listy stacji radiowych z serwera
 void fetchStationsFromServer() 
 {
-  bankChange = true;
   displayActive = true;
   u8g2.setFont(spleen6x12PL);
   u8g2.clearBuffer();
@@ -1545,21 +1470,21 @@ void displayRadio()
       if (stationNameStream == "") // jezeli nie ma równiez stationName
       { 
         stationStringScroll = "---" ;
+        stationStringWeb = "---" ;
       } // wstawiamy trzy kreseczki do wyswietlenia
       else // jezeli jest station name to prawiamy w "-- NAZWA --" i wysylamy do scrollera
       { 
         stationStringScroll = ("-- " + stationNameStream + " --");
+        stationStringWeb = ("-- " + stationNameStream + " --");
       }  // Zmienna stationStringScroller przyjmuje wartość stationNameStream
     }
     else // Jezeli stationString zawiera dane to przypisujemy go do stationStringScroll do funkcji scrollera
     {
+      stationStringWeb = stationString;
+      processText(stationString);  // przetwarzamy polsie znaki
       stationStringScroll = stationString + "    "; // dodajemy separator do przewijanego tekstu jesli się nie miesci na ekranie
     }
-    
-    //Serial.print("debug -> Display0 (ekran radio) stationStringScroll: ");
-    //Serial.println(stationStringScroll);
-        
-        
+              
     //Liczymy długość napisu stationStringScroll 
     Serial.print("### StationStringScroll lenght [chars]:");
     Serial.println(stationStringScroll.length());
@@ -1599,6 +1524,7 @@ void displayRadio()
       if (stationNameStream == "")          // jezeli nie ma równiez stationName
       {
         stationStringScroll = String(StationNrStr) + "." + stationName + ", ---" ;
+        stationStringWeb = "---" ;
       }      // wstawiamy trzy kreseczki do wyswietlenia
       else                                  // jezeli jest brak "stationString" ale jest "stationName" to składamy NR.Nazwa stacji z pliku, nadawany stationNameStream + separator przerwy
       { 
@@ -1607,6 +1533,7 @@ void displayRadio()
     }
     else //stationString != "" -> ma wartość
     {
+      stationStringWeb = stationString;
       processText(stationString);  // przetwarzamy polsie znaki
       stationStringScroll = String(StationNrStr) + "." + stationName + ", " + stationString + "      ";
       Serial.println(stationStringScroll);
@@ -1650,14 +1577,17 @@ void displayRadio()
       if (stationNameStream == "") // jezeli nie ma równiez stationName
       { 
         stationStringScroll = "---" ;
+        stationStringWeb = "---" ;
       } // wstawiamy trzy kreseczki do wyswietlenia
       else // jezeli jest station name to oprawiamy w "-- NAZWA --" i wysylamy do scrollera
       { 
         stationStringScroll = ("-- " + stationNameStream + " --");
+        stationStringWeb = stationNameStream;
       }  // Zmienna stationStringScroller przyjmuje wartość stationNameStream
     }
     else // Jezeli stationString zawiera dane to przypisujemy go do stationStringScroll do funkcji scrollera
     {
+      stationStringWeb = stationString;
       processText(stationString);  // przetwarzamy polsie znaki
       stationStringScroll = stationString;
     }
@@ -1822,7 +1752,6 @@ void bankMenuDisplay()
   bankMenuEnable = true;
   timeDisplay = false;
   displayActive = true;
-  //bankChange = true;
   //currentOption = BANK_LIST;  // Ustawienie listy banków do przewijania i wyboru
   String bankNrStr = String(bank_nr);
   Serial.println("Wyświetlenie listy banków");
@@ -2386,57 +2315,16 @@ void changeStation2()
 
 void wsStationChange(uint8_t stationId) 
 {
-  ws.textAll("station:" + String(stationId));
   ws.textAll("stationname:" + String(stationName.substring(0, stationNameLenghtCut)));
-  //ws.textAll("stationtext|" + stationStringScroll);
-  //ws.textAll("volume:" + String(volumeValue)); 
-
-  if (bankChange == true)
-  {
-    bankChange = false;
-    ws.textAll("bank:" + String(bank_nr));
-  }
-  
+  ws.textAll("station:" + String(stationId));
+  ws.textAll("bank:" + String(bank_nr));
+  ws.textAll("volume:" + String(volumeValue)); 
 }
 
 void wsStreamInfoRefresh()
 { 
-  ws.textAll("stationtext$" + stationStringScroll);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
-}
-
-
-
-
-
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) 
-{
-  if (type == WS_EVT_CONNECT) 
-  {
-    Serial.println("WebSocket klient podlaczony");
-
-    // Wyślij aktualną stację po połączeniu
-    //String msg = "station:" + String(station_nr);
-    //String stationNameData = "stationname:" + stationName.substring(0, stationNameLenghtCut);
-    //client->text(msg);
-    client->text("station:" + String(station_nr));
-    client->text("stationname:" + stationName.substring(0, stationNameLenghtCut));
-    client->text("volume:" + String(volumeValue)); 
-
-    //client->text("bank:" + String(bank_nr));
-    //client->text("stationtext$" + stationStringScroll);
-    
-    
-    //String bankValueData = "bankvalue:" + String(currentBank);
-    //String volumeData = "slidervalue:" + String(currentVolume);
-
-    //client->text(stationData);
-    
-    //client->text(stationNameData);
-    
-    //client->text(bankValueData);
-   
-
-  } 
+  //ws.textAll("stationtext$" + stationStringScroll);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
+  ws.textAll("stationtext$" + stationStringWeb);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
 }
 
 
@@ -3322,6 +3210,47 @@ void volumeDown()
   u8g2.sendBuffer();
   wsVolumeChange(volumeValue); // wyślij aktualizację przez WebSocket
 }
+
+
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) 
+{
+  if (type == WS_EVT_CONNECT) 
+  {
+    Serial.println("WebSocket klient podlaczony");
+
+    client->text("station:" + String(station_nr));
+    client->text("stationname:" + stationName.substring(0, stationNameLenghtCut));
+    client->text("volume:" + String(volumeValue)); 
+    client->text("bank:" + String(bank_nr));
+    //client->text("stationtext$" + stationStringScroll);
+    client->text("stationtext$" + stationStringWeb);
+  } 
+  else if (type == WS_EVT_DATA) 
+  {
+    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+    if (info->final && info->index == 0 && info->len == len) 
+    {
+      String msg = "";
+      for (size_t i = 0; i < len; i++) 
+      {
+        msg += (char) data[i];
+      }
+
+      Serial.println("Odebrano WS: " + msg);
+
+      if (msg.startsWith("volume:")) 
+      {
+        int newVolume = msg.substring(7).toInt();
+        volumeValue = newVolume;
+        volumeDisplay();   // wyswietle wartosci na OLED i aktualizacja okiektu audio volume
+      }
+    }
+  }
+
+}
+
+
+
 
 void bufforAudioInfo()
 {
@@ -4317,6 +4246,7 @@ void readConfig()
   {
     maxVolume = 21;
   }
+  audio.setVolumeSteps(maxVolume);
 }
 
 
@@ -4506,8 +4436,8 @@ String stationBankListHtmlMobile()
 {
   String html1;
   
-  html1 += "<p>Volume: <span id='textSliderValue'>%%SLIDERVALUE%%</span></p>" + String("\n");
-  html1 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='%%SLIDERVALUE%%' step='1' class='slider'></p>" + String("\n");
+  html1 += "<p>Volume: <span id='textSliderValue'>--</span></p>" + String("\n");
+  html1 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='1' step='1' class='slider'></p>" + String("\n");
   html1 += "<p>Bank selection:</p>" + String("\n");
     
   html1 += "<p>";
@@ -4554,7 +4484,11 @@ String stationBankListHtmlMobile()
   html1 += "<p style=\"font-size: 0.8rem;\">Web Radio, mobile, Evo: " + String(softwareRev) + "</p>" + String("\n");
   //html += "<p style=\"font-size: 0.8rem;\"><a href=\"list\">SD CARD, </a><a href='/fwupdate'>OTA UPDATE, </a><a href='/config'>CONFIG</a></p>" + String("\n");
   html1 += "<p style='font-size: 0.8rem;'>IP: "+ currentIP + "</p>" + String("\n");
-  html1 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
+  
+    
+  //html1 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
+  html1 += "<a href='/menu' class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1;color: white; width: 65px; border: 1px solid black; display: inline-block; border-radius: 5px; text-decoration: none;'>Menu</a>";
+  //html1 += "<button class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1; width: 65px;'>Menu</button>";
   html1 += "</center></body></html>";
   
   return html1;
@@ -4564,8 +4498,10 @@ String stationBankListHtmlPC()
 {
   String html2;
   
-  html2 += "<p>Volume: <span id='textSliderValue'>%%SLIDERVALUE%%</span></p>" + String("\n");
-  html2 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='%%SLIDERVALUE%%' step='1' class='slider'></p>" + String("\n");
+  //html2 += "<p>Volume: <span id='textSliderValue'>%%SLIDERVALUE%%</span></p>" + String("\n");
+  html2 += "<p>Volume: <span id='textSliderValue'>--</span></p>" + String("\n");
+  //html2 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='%%SLIDERVALUE%%' step='1' class='slider'></p>" + String("\n");
+  html2 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='1' step='1' class='slider'></p>" + String("\n");
   //html2 += "<br>";
   html2 += "<p>Bank selection:</p>" + String("\n");
   
@@ -4628,8 +4564,9 @@ String stationBankListHtmlPC()
   html2 += "<p style=\"font-size: 0.8rem;\">Web Radio, desktop, Evo: " + String(softwareRev) + "</p>" + String("\n");
   //html += "<p style=\"font-size: 0.8rem;\"><a href=\"list\">SD CARD, </a><a href='/fwupdate'>OTA UPDATE, </a><a href='/config'>CONFIG</a></p>" + String("\n");
   html2 += "<p style='font-size: 0.8rem;'>IP: " + currentIP + "</p>" + String("\n");
-  html2 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
-
+  //html2 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
+  //html2 += "<button class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1; width: 65px;'>Menu</button>";
+  html2 += "<a href='/menu' class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1;color: white; width: 65px; border: 1px solid black; display: inline-block; border-radius: 5px; text-decoration: none;'>Menu</a>";
   html2 += "</center></body></html>"; 
 
   return html2;
@@ -4829,12 +4766,12 @@ void readRemoteConfig()
 
 void assignRemoteCodes()
 {
-  Serial.print("IR Config - assignRemoteCodes, configIrExist: ");
+  Serial.print("IR Config - Plik konfiguracji pilota istnieje, configIrExist: ");
   Serial.println(configIrExist);
 
   if ((noSDcard == false) && (configIrExist == true)) 
   {
-  Serial.println("IR config - Przypisuje wartosci z pliku Remote.txt");
+  Serial.println("IR Config - Plik istnieje, przypisuje wartosci z pliku Remote.txt");
   rcCmdVolumeUp = configRemoteArray[0];    // Głosnosc +
   rcCmdVolumeDown = configRemoteArray[1];  // Głośnosc -
   rcCmdArrowRight = configRemoteArray[2];  // strzałka w prawo - nastepna stacja
@@ -4864,7 +4801,7 @@ void assignRemoteCodes()
   }
   else if ((noSDcard == true) || (configIrExist == false)) // Jesli nie ma karty SD przypisujemy standardowe wartosci dla pilota Kenwood RC-406
   {
-    Serial.println("IR Config - Przypisuje wartosci domyslne");
+    Serial.println("IR Config - BRAK konfiguracji pilota, przypisuje wartosci domyslne");
     rcCmdVolumeUp = 0xB914;   // Głosnosc +
     rcCmdVolumeDown = 0xB915; // Głośnosc -
     rcCmdArrowRight = 0xB90B; // strzałka w prawo - nastepna stacja
@@ -5100,7 +5037,7 @@ void setup()
   wifiManager.setConfigPortalBlocking(false);
 
   readConfig();          // Odczyt konfiguracji
-  if (configExist == false) { saveConfig();} // Jesli nie ma pliku config.txt to go tworzymy
+  if (configExist == false) { saveConfig(); readConfig();} // Jesli nie ma pliku config.txt to go tworzymy
   readStationFromSD();   // Odczytujemy zapisaną ostanią stację i bank z karty SD /EEPROMu
   readEqualizerFromSD(); // Odczytujemy ustawienia filtrów equalizera z karty SD 
   readVolumeFromSD();    // Odczytujemy nastawę ostatniego poziomu głośnosci z karty SD /EEPROMu
@@ -5140,20 +5077,14 @@ void setup()
     u8g2.drawStr(115, 62, currentIP.c_str());   //wyswietlenie IP
     u8g2.sendBuffer();
     delay(1000);  // odczekaj 1 sek przed wymazaniem numeru IP
-
-    //u8g2.setFont(spleen6x12PL);
-    //u8g2.clearBuffer();
-    //u8g2.drawStr(10, 25, "Time synchronization...");
-    //u8g2.sendBuffer();
-
+    
+    if (MDNS.begin(hostname)) { Serial.println("mDNS wystartowal, adres: " + String(hostname) + ".local w przeglądarce"); }
+    
     //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2 );
     configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer1, ntpServer2);
     
     timer1.attach(1, updateTimerFlag);  // Ustaw timer, aby wywoływał funkcję updateTimer co sekundę
     timer2.attach(1, displayDimmerTimer);
-    
-    //timer1.attach(1, updateTimer);   // Ustaw timer, aby wywoływał funkcję updateTimer co sekundę
-    //timer2.attach(60, getWeatherData);   // Ustaw timer, aby wywoływał funkcję getWeatherData co 60 sekund
     //timer3.attach(10, switchWeatherData);   // Ustaw timer, aby wywoływał funkcję switchWeatherData co 10 sekund
   
 
@@ -5184,26 +5115,9 @@ void setup()
         //html = stationBankListHtml(0);
       }
       
-      /*String finalHtml;
-      finalHtml.reserve(60000);  // Zapas
-      finalHtml = index_html;
-      finalHtml += html;
-      request->send_P(200, "text/html", finalHtml.c_str(), processor);
-      */
-
       String finalhtml = String(index_html) + html;  // Składamy cześć stałą html z częscią generowaną dynamicznie
-      request->send_P(200, "text/html", finalhtml.c_str(), processor);
-      
-      /*
-      AsyncWebServerResponse *response = request->beginResponse_P(200, "text/html", finalhtml.c_str(), processor);
-      response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-      response->addHeader("Pragma", "no-cache");
-      response->addHeader("Expires", "-1");
-      request->send(response);
-      */
-
-
-
+      //request->send_P(200, "text/html", finalhtml.c_str(), processor);
+      request->send_P(200, "text/html", finalhtml.c_str());
     });
 
     server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -5296,16 +5210,7 @@ void setup()
         }
     });
 
-    /*
-    server.on("/page2", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      stationBankListHtmlPC();
-      html = String(index_html) + html;
-
-      request->send_P(200, "text/html", html.c_str(), processor);
-    });
-    */
-    
+   
     server.on("/displayMode", HTTP_GET, [](AsyncWebServerRequest *request)
     {
       ir_code = rcCmdSrc; // Udajemy kod pilota SRC - zmiana trybu wyswietlacza 
@@ -5701,7 +5606,7 @@ void setup()
 
     request->send(200, "text/html", "<h1>Configuration Updated!</h1><a href='/menu'>Go Back</a>");
     saveConfig(); 
-    
+    readConfig();
     //ODswiezenie ekranu OLED po zmianach konfiguracji
     ir_code = rcCmdBack; // Udajemy komendy pilota
     bit_count = 32;
@@ -5908,13 +5813,13 @@ void setup()
     server.on("/volumeUp", HTTP_GET, [](AsyncWebServerRequest *request)
     {
       volumeUp(); 
-      request->send_P(200, "text/html", index_html, processor);
+      request->send_P(200, "text/html", index_html);
     });
 
     server.on("/volumeDown", HTTP_GET, [](AsyncWebServerRequest *request)
     {
       volumeDown(); 
-      request->send_P(200, "text/html", index_html, processor);
+      request->send_P(200, "text/html", index_html);
     });
 
     server.on("/stationUp", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -5922,7 +5827,7 @@ void setup()
       station_nr++;
       if (station_nr > stationsCount) {station_nr = 1;}
       changeStation();
-      request->send_P(200, "text/html", index_html, processor);
+      request->send_P(200, "text/html", index_html);
     });
 
     server.on("/stationDown", HTTP_GET, [](AsyncWebServerRequest *request)
@@ -5930,7 +5835,7 @@ void setup()
       station_nr--;
       if (station_nr < 1) {station_nr = stationsCount;}
       changeStation();
-      request->send_P(200, "text/html", index_html, processor);
+      request->send_P(200, "text/html", index_html);
     });
 
 
@@ -6027,9 +5932,6 @@ void setup()
     updateTimer();
     //readRemoteConfig();
     //assignRemoteCodes();
-    if (MDNS.begin(hostname)) { Serial.println("mDNS rozpoczęte. HOSTNAME.local' w przeglądarce"); }
-
-
   } 
   else 
   {
