@@ -23,7 +23,7 @@
 #include <ESPmDNS.h>           // Blibioteka mDNS dla ESP
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.17.90"  // Wersja oprogramowania radia
+#define softwareRev "v3.17.99"  // Wersja oprogramowania radia
 #define hostname "esp32radio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 
@@ -325,8 +325,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <h2>ESP32 Web Radio</h2>
   
-  <div style="display: inline-block; padding: 5px; border: 2px solid #4CAF50; border-radius: 15px; background-color: #4a4a4a; font-size: 1.45rem; 
-  color: #AAA; width: 345px; text-align: center; white-space: nowrap; box-shadow: 0 0 20px #4CAF50;  ">
+  <div id="display" style="display: inline-block; padding: 5px; border: 2px solid #4CAF50; border-radius: 15px; background-color: #4a4a4a; font-size: 1.45rem; 
+  color: #AAA; width: 345px; text-align: center; white-space: nowrap; box-shadow: 0 0 20px #4CAF50;" onClick="flashBackground(); displayMode()">
     
     <div style="margin-bottom: 10px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; -webkit-text-stroke: 0.3px black; text-stroke: 0.3px black;">
       <span id="textStationName"><b>STATIONNAME</b></span>
@@ -340,17 +340,23 @@ const char index_html[] PROGMEM = R"rawliteral(
     
     <div style="height: 1px; background-color: #4CAF50; margin: 5px 0;"></div>
 
-    <div style="display: flex; justify-content: center; gap: 200px; font-size: 1.0rem; color: #999;">
+    
+    <div style="display: flex; justify-content: center; gap: 25px; font-size: 1.0rem; color: #999;">
       <div><span id="bankValue">Bank: --</span></div>
+    
+      <div style="display: flex; justify-content: center; gap: 10px; font-size: 0.65rem; color: #999;margin: 3px 0;">
+        <div><span id="samplerate">---.-kHz</span></div>
+        <div><span id="bitrate">---bit</span></div>
+        <div><span id="bitpersample">---kbps</span></div>
+        <div><span id="streamformat">----</span></div>
+      </div>
+      
       <div><span id="stationNumber">Station: --</span></div>
     </div>
 
   </div>
   <br>
   <br>
-  <button class="button" onClick="displayMode()">OLED Display Mode</button>
-  
-        
  <script>
 
   var websocket;
@@ -453,8 +459,35 @@ const char index_html[] PROGMEM = R"rawliteral(
       {
         var bankValue = parseInt(event.data.split(":")[1]);
         document.getElementById('bankValue').innerText = 'Bank: ' + bankValue;
-      }    
+      } 
+
+      if (event.data.startsWith("samplerate:")) 
+      {
+        var samplerate = parseInt(event.data.split(":")[1]);
+        var formattedRate = (samplerate / 1000).toFixed(1) + "kHz";
+        document.getElementById('samplerate').innerText = formattedRate;
+      }
+      
+      if (event.data.startsWith("bitrate:")) 
+      {	
+        var bitrate = parseInt(event.data.split(":")[1]);
+        document.getElementById('bitrate').innerText = bitrate + 'kbps';
+      }  
+      
+      if (event.data.startsWith("bitpersample:")) 
+      {	
+        var bitpersample = parseInt(event.data.split(":")[1]);
+        document.getElementById('bitpersample').innerText = bitpersample + 'bit';
+      }  
+      
+      if (event.data.startsWith("streamformat:")) 
+      {	
+        var streamformat = event.data.split(":")[1];
+        document.getElementById('streamformat').innerText = streamformat;
+      }  
+
     }
+
   };
   
   function highlightStation(stationId) 
@@ -494,6 +527,27 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
   }
   
+  function flashBackground() 
+	{
+	  const div = document.getElementById('display');
+	  const originalColor = div.style.backgroundColor;
+
+	  const textSpan = document.getElementById('textStationName');
+    const originalText = textSpan.innerText;
+
+
+	  div.style.backgroundColor = '#115522'; // kolor flash
+	  //textSpan.innerText = 'OLED Display Mode Changed';
+    textSpan.innerHTML = '<b>Display Mode Changed</b>';  
+
+	  setTimeout(() => 
+	  {
+		  div.style.backgroundColor = originalColor;
+		  //textSpan.innerText = originalText;
+      textSpan.innerHTML = `<b>${originalText}</b>`;
+	  }, 850); // czas w ms flasha
+	}
+
 
   document.addEventListener("DOMContentLoaded", function () 
   {
@@ -520,6 +574,14 @@ const char index_html[] PROGMEM = R"rawliteral(
       updateSliderVolume(slider); // wywołaj aktualizację
     });
   });
+
+  window.onpageshow = function(event) 
+  {
+    if (event.persisted) 
+    {
+      window.location.reload();
+    }
+  };
 
  </script>
 
@@ -690,7 +752,7 @@ const char menu_html[] PROGMEM = R"rawliteral(
   <title>ESP32 Web Radio</title>
   <style>
     html {font-family: Arial; display: inline-block; text-align: center;}
-    h2 {font-size: 2.3rem;}
+    h2 {font-size: 1.3rem;}
     p {font-size: 1.1rem;}
     a {color: black; text-decoration: none;}
     body {max-width: 1380px; margin:0px auto; padding-bottom: 25px;}
@@ -707,7 +769,7 @@ const char menu_html[] PROGMEM = R"rawliteral(
   <br><button class="button" onclick="location.href='/list'">SD / SPIFFS Explorer</button><br>
   <br><button class="button" onclick="location.href='/editor'">Memory Bank Editor</button><br>
   <br><button class="button" onclick="location.href='/config'">Configuration</button><br>
-  <br><p style='font-size: 0.8rem;'><a href='/'>Go Back</a></p>
+  <br><p style='font-size: 0.8rem;'><a href="#" onclick="window.location.replace('/')">Go Back</a></p>
   </body></html>
 
 )rawliteral";
@@ -1045,6 +1107,50 @@ void wsRefreshPage() // Funckja odswiezania strony za pomocą WebSocket
 {
   ws.textAll("reload");  // wyślij komunikat do wszystkich klientów
 }
+
+void wsStationChange(uint8_t stationId) 
+{
+  ws.textAll("stationname:" + String(stationName.substring(0, stationNameLenghtCut)));
+  ws.textAll("station:" + String(stationId));
+  ws.textAll("bank:" + String(bank_nr));
+  ws.textAll("volume:" + String(volumeValue)); 
+  
+  ws.textAll("bitrate:" + String(bitrateString)); 
+  ws.textAll("samplerate:" + String(sampleRateString)); 
+  ws.textAll("bitpersample:" + String(bitsPerSampleString)); 
+
+  if (mp3 == true) {ws.textAll("streamformat:MP3"); }
+  if (flac == true) {ws.textAll("streamformat:FLAC"); }
+  if (aac == true) {ws.textAll("streamformat:AAC"); }
+  if (vorbis == true) {ws.textAll("streamformat:VBR"); }
+}
+
+void wsStreamInfoRefresh()
+{ 
+  if (audio.isRunning() == true)
+  {
+    ws.textAll("stationtext$" + stationStringWeb);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
+  }
+  else
+  {
+    ws.textAll("stationtext$... No audio stream ! ...");
+  }
+
+  ws.textAll("bitrate:" + String(bitrateString)); 
+  ws.textAll("samplerate:" + String(sampleRateString)); 
+  ws.textAll("bitpersample:" + String(bitsPerSampleString)); 
+
+  if (mp3 == true) {ws.textAll("streamformat:MP3"); }
+  if (flac == true) {ws.textAll("streamformat:FLAC"); }
+  if (aac == true) {ws.textAll("streamformat:AAC"); }
+  if (vorbis == true) {ws.textAll("streamformat:VBR"); }
+}
+
+void wsVolumeChange(int newVolume) 
+{
+  ws.textAll("volume:" + String(volumeValue)); // wysyła wartosc volume do wszystkich połączonych klientów
+}
+
 
 //Funkcja odpowiedzialna za zapisywanie informacji o stacji do pamięci EEPROM.
 void saveStationToPSRAM(const char *station) 
@@ -1668,6 +1774,7 @@ void audio_info(const char *info)
     mp3 = false;
   }
 }
+
 void audio_id3data(const char *info) {
   Serial.print("id3data     ");
   Serial.println(info);
@@ -2313,21 +2420,6 @@ void changeStation2()
   //screenRefreshTime = millis();
 }
 
-void wsStationChange(uint8_t stationId) 
-{
-  ws.textAll("stationname:" + String(stationName.substring(0, stationNameLenghtCut)));
-  ws.textAll("station:" + String(stationId));
-  ws.textAll("bank:" + String(bank_nr));
-  ws.textAll("volume:" + String(volumeValue)); 
-}
-
-void wsStreamInfoRefresh()
-{ 
-  //ws.textAll("stationtext$" + stationStringScroll);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
-  ws.textAll("stationtext$" + stationStringWeb);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
-}
-
-
 
 void changeStation() 
 {
@@ -2638,9 +2730,9 @@ void updateTimer()
 
       if (millis() - lastCheckTime >= 1000)
       {
-      if ((displayMode == 0) || (displayMode == 2)) { u8g2.drawStr(0, 63, "... No audio stream ! ...");}
-      if (displayMode == 1) { u8g2.drawStr(0, 33, "... No audio stream ! ...");}
-      lastCheckTime = millis(); // Zaktualizuj czas ostatniego sprawdzenia
+        if ((displayMode == 0) || (displayMode == 2)) { u8g2.drawStr(0, 63, "... No audio stream ! ...");}
+        if (displayMode == 1) { u8g2.drawStr(0, 33, "... No audio stream ! ...");}
+        lastCheckTime = millis(); // Zaktualizuj czas ostatniego sprawdzenia
       }       
       u8g2.drawStr(208, 63, timeString);
 
@@ -3120,11 +3212,6 @@ void handleKeyboard()
   // vTaskDelete(NULL);
 }
 
-void wsVolumeChange(int newVolume) 
-{
-  ws.textAll("volume:" + String(volumeValue)); // wysyła wartosc volume do wszystkich połączonych klientów
-}
-
 
 void volumeDisplay()
 {
@@ -3222,8 +3309,25 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     client->text("stationname:" + stationName.substring(0, stationNameLenghtCut));
     client->text("volume:" + String(volumeValue)); 
     client->text("bank:" + String(bank_nr));
-    //client->text("stationtext$" + stationStringScroll);
-    client->text("stationtext$" + stationStringWeb);
+    if (audio.isRunning() == true)
+    {
+       client->text("stationtext$" + stationStringWeb);
+    }
+    else
+    {
+     client->text("stationtext$... No audio stream ! ...");
+    }
+    
+    client->text("bitrate:" + String(bitrateString)); 
+    client->text("samplerate:" + String(sampleRateString)); 
+    client->text("bitpersample:" + String(bitsPerSampleString)); 
+
+  if (mp3 == true) {client->text("streamformat:MP3"); }
+  if (flac == true) {client->text("streamformat:FLAC"); }
+  if (aac == true) {client->text("streamformat:AAC"); }
+  if (vorbis == true) {client->text("streamformat:VBR"); }
+
+
   } 
   else if (type == WS_EVT_DATA) 
   {
@@ -3242,7 +3346,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
       {
         int newVolume = msg.substring(7).toInt();
         volumeValue = newVolume;
-        volumeDisplay();   // wyswietle wartosci na OLED i aktualizacja okiektu audio volume
+        volumeDisplay();   // wyswietle wartosci na OLED i aktualizacja obiektu audio
       }
     }
   }
@@ -6271,50 +6375,13 @@ void loop()
       }
       else if (ir_code == rcCmdRed) 
       {     
-       voiceTime();
-
-       //u8g2.setPowerSave(1);
-       //u8g2.setContrast(128);
-
-       //saveConfig();
-       //{vuMeterOn = !vuMeterOn; displayRadio();}  
-       //u8g2.sendF("ca", 0xb9, 0x07);
-       //u8g2.sendF("ca", 0xb6, 0xFF);
-       //displayBasicInfo();
-       //debugAudioBuffor = !debugAudioBuffor;
-       //displayAutoDimmerOn = !displayAutoDimmerOn;     
+       voiceTime();   
         
       }
       else if (ir_code == rcCmdGreen) 
       {
-        readRemoteConfig();
-        assignRemoteCodes();
-
-        //voiceTimeEn();
-        
-        //u8g2.setPowerSave(0);
-        //u8g2.setContrast(255);
-        //readConfig();
-
-        //u8g2.sendF("ca", 0xc1, 0xff);
-        //u8g2.sendF("caaaaaaaaaaaaaaa", 0xb8, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4, 0xb4);
-
-        //saveEEPROM();
-        //displayConfig();
-         
-        //readPSRAMstations();
-         
-        //saveConfig();
-        //Serial.println("#### ODCZYT ####");
-        
-                 
-        //displayRadio();
-        //u8g2.sendBuffer();
-        //vuMeterMode = !vuMeterMode;} // Zmiana trybu VU meter z przerywanych kresek na ciągłe paski
-         
-        //readRcStoredCodes(rcPage); // Sprawdzenie komend pilota - funkcja testowa
-        //rcPage++;
-        //if (rcPage > 2) {rcPage = 0;}
+        voiceTimeEn();
+              
       }   
       else if (ir_code == rcCmdBankMinus) 
       {
@@ -6437,3 +6504,4 @@ void loop()
   //runTime2 = esp_timer_get_time();
   //runTime = runTime2 - runTime1;  
 }
+
