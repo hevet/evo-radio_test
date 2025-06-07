@@ -2,10 +2,11 @@
 // ESP32 Radio Evo3 - Interent Radio Player                                                        //
 // ############################################################################################### //
 // Robgold 2025                                                                                    //
-// Source -> https://github.com/dzikakuna/ESP32_radio_evo3/tree/main/src/ESP32_radio_v2_evo3.17    //
+// Source -> https://github.com/dzikakuna/ESP32_radio_evo3/tree/main/src/ESP32_radio_v2_evo3.18    //
 // ############################################################################################### //
 
 #include "Arduino.h"           // Standardowy nagłówek Arduino, który dostarcza podstawowe funkcje i definicje
+#include <WiFiManager.h>       // Biblioteka do zarządzania konfiguracją sieci WiFi, opis jak ustawić połączenie WiFi przy pierwszym uruchomieniu jest opisany tu: https://github.com/tzapu/WiFiManager
 #include "Audio.h"             // Biblioteka do obsługi funkcji związanych z dźwiękiem i audio
 #include "SPI.h"               // Biblioteka do obsługi komunikacji SPI
 #include "SD.h"                // Biblioteka do obsługi kart SD
@@ -14,7 +15,6 @@
 #include <ezButton.h>          // Biblioteka do obsługi enkodera z przyciskiem
 #include <HTTPClient.h>        // Biblioteka do wykonywania żądań HTTP, umożliwia komunikację z serwerami przez protokół HTTP
 #include <Ticker.h>            // Mechanizm tickera do odświeżania timera 1s, pomocny do cyklicznych akcji w pętli głównej
-#include <WiFiManager.h>       // Biblioteka do zarządzania konfiguracją sieci WiFi, opis jak ustawić połączenie WiFi przy pierwszym uruchomieniu jest opisany tu: https://github.com/tzapu/WiFiManager
 #include <EEPROM.h>            // Bilbioteka obsługi emulacji pamięci EEPROM
 #include <Time.h>              // Biblioteka do obsługi funkcji związanych z czasem, np. odczytu daty i godziny
 #include <ESPAsyncWebServer.h> // Bliblioteka asyncrhionicznego serwera web
@@ -23,7 +23,7 @@
 #include <ESPmDNS.h>           // Blibioteka mDNS dla ESP
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.17.99"  // Wersja oprogramowania radia
+#define softwareRev "v3.18.04"  // Wersja oprogramowania radia
 #define hostname "esp32radio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 
@@ -131,7 +131,11 @@ int buttonLongPressTime2 = 2000;       // Czas reakcji na długie nacisniecie en
 int buttonShortPressTime2 = 500;       // Czas rekacjinna krótkie nacisniecie enkodera 2
 int buttonSuperLongPressTime2 = 4000;  // Czas reakcji na super długie nacisniecie enkoder 2
 uint8_t stationNameLenghtCut = 24;    // 24-> 25 znakow, 25-> 26 znaków, zmienna określająca jak długa nazwę ma nazwa stacji w plikach Bankow liczone od 0- wartosci ustalonej
-
+uint8_t yPositionDisplayScrollerMode0 = 33;
+uint8_t yPositionDisplayScrollerMode1 = 61;
+uint8_t yPositionDisplayScrollerMode2 = 25;
+uint16_t stationStringScrollLength = 0;
+uint8_t maxStationVisibleStringScrollLength = 46;
 // ---- Głosowe odtwarzanie czasu co godzinę ---- //
 bool voiceTimePlay = false; 
 bool voiceTimePlayActionTaken = false;
@@ -141,7 +145,7 @@ bool timeVoiceInfoEveryHour = true;
 // ---- Auto dimmer / auto przyciemnianie wyswietlacza ---- //
 uint8_t displayDimmerTimeCounter = 0;  // Zmienna inkrementowana w przerwaniu timera2 do przycimniania wyswietlacz
 uint8_t dimmerDisplayBrightness = 10;   // Wartość przyciemnienia wyswietlacza po czasie niekatywnosci
-uint8_t displayBrightness = 250;        // Domyślna maksymalna janość wyswietlacza
+uint8_t displayBrightness = 180;        // Domyślna maksymalna janość wyswietlacza
 uint16_t displayAutoDimmerTime = 10;   // Czas po jakim nastąpi przyciemninie wyswietlacza, liczony w sekundach
 bool displayAutoDimmerOn = false;       // Automatyczne przyciemnianie wyswietlacza, domyślnie włączone
 bool displayDimmerActive = false;       // Aktywny tryb przyciemnienia
@@ -191,7 +195,8 @@ bool vuMeterMode = false;         // tryb rysowania vuMeter
 bool action3Taken = false;        // Flaga Akcji 3 - załaczenia VU
 bool ActionNeedUpdateTime = false;// Zmiena okresaljaca dla displayRadio potrzebe odczytu aktulizacji czasu
 bool debugAudioBuffor = false;    // Wyswietlanie bufora Audio
-bool audioInfoRefresh = false;    // Flaga wymuszjąca wymagane odsiwezenie ze względu na zmianę info stream
+bool audioInfoRefresh = false;    // Flaga wymuszjąca wymagane odsiwezenie ze względu na zmianę info stream - stationstring, title, 
+bool audioInfoRefresh2 = false;    // Flaga wymuszjąca wymagane odsiwezenie ze względu na zmianę info stream - linia kbps, khz, format streamu
 bool noSDcard = false;              // flaga ustawiana przy braku wykrycia karty SD
 bool resumePlay = false;            // Flaga wymaganego uruchomienia odtwarzania po zakonczeniu komunikatu głosowego
 bool fwupd = false;               // Flaga blokujaca main loop podczas aktualizacji oprogramowania
@@ -278,12 +283,7 @@ Ticker timer2;             // Timer do getWeatherData co 60s
 //Ticker timer3;           // Timer do przełączania wyświetlania danych pogodoych w ostatniej linii co 10s
 WiFiClient client;         // Obiekt do obsługi połączenia WiFi dla klienta HTTP
 
-const char* PARAM_INPUT_1 = "volume";
-const char* PARAM_INPUT_2 = "station";
-const char* PARAM_INPUT_3 = "bank";
-const char* PARAM_INPUT_4 = "url";
-
-const char index_html[] PROGMEM = R"rawliteral(
+const char stylehead_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html>
 <head>
   <link rel='icon' href='/favicon.ico' type='image/x-icon'>
@@ -321,43 +321,84 @@ const char index_html[] PROGMEM = R"rawliteral(
     .station-name   
   </style>
 </head>
+)rawliteral";
 
-<body>
-  <h2>ESP32 Web Radio</h2>
+
+const char index_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE HTML><html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h2 {font-size: 1.3rem;}
+      p {font-size: 0.95rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
+      td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
+      td:hover {font-weight:bold;}
+      a {color: black; text-decoration: none;}
+      body {max-width: 1380px; margin:0px auto; padding-bottom: 25px; background: #D0D0D0;}
+      .slider {-webkit-appearance: none; margin: 14px; width: 330px; height: 10px; background: #4CAF50; outline: none; -webkit-transition: .2s; transition: opacity .2s; border-radius: 5px;}
+      .slider::-webkit-slider-thumb {-webkit-appearance: none; appearance: none; width: 35px; height: 25px; background: #4a4a4a; cursor: pointer; border-radius: 5px;}
+      .slider::-moz-range-thumb { width: 35px; height: 35px; background: #4a4a4a; cursor: pointer; border-radius: 5px;} 
+      .button { background-color: #4CAF50; border: 1; color: white; padding: 10px 20px; border-radius: 5px;}
+      .buttonBank { background-color: #4CAF50; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
+      .buttonBankSelected { background-color: #505050; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
+      .buttonBank:active {background-color: #4a4a4a box-shadow: 0 4px #666; transform: translateY(2px);}
+      .buttonBank:hover {background-color: #4a4a4a;}
+      .button:hover {background-color: #4a4a4a;}
+      .button:active {background-color: #4a4a4a; box-shadow: 0 4px #666; transform: translateY(2px);}
+      .column { align: center; padding: 5px; display: flex; justify-content: space-between;}
+      .columnlist { align: center; padding: 10px; display: flex; justify-content: center;}
+      .stationList {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer;}
+      .stationNumberList {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px;}
+      .stationListSelected {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer; background-color: #4CAF50;}
+      .stationNumberListSelected {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px; background-color: #4CAF50;}
+      .station-name   
+    </style>
+  </head>
+
+  <body>
+    <h2>ESP32 Web Radio</h2>
   
-  <div id="display" style="display: inline-block; padding: 5px; border: 2px solid #4CAF50; border-radius: 15px; background-color: #4a4a4a; font-size: 1.45rem; 
-  color: #AAA; width: 345px; text-align: center; white-space: nowrap; box-shadow: 0 0 20px #4CAF50;" onClick="flashBackground(); displayMode()">
-    
-    <div style="margin-bottom: 10px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; -webkit-text-stroke: 0.3px black; text-stroke: 0.3px black;">
-      <span id="textStationName"><b>STATIONNAME</b></span>
-    </div>
-    
-    <div style="width: 345px; margin-bottom: 10px;">
-      <div id="stationTextDiv" style="display: block; text-overflow: ellipsis; white-space: normal; font-size: 1.0rem; color: #999; margin-bottom: 10px; text-align: center; align-items: center; height: 4.2em; justify-content: center; overflow: hidden; line-height: 1.4em;">
-        <span id="stationText">STATIONTEXT</span>
-      </div>
-    </div>
-    
-    <div style="height: 1px; background-color: #4CAF50; margin: 5px 0;"></div>
-
-    
-    <div style="display: flex; justify-content: center; gap: 25px; font-size: 1.0rem; color: #999;">
-      <div><span id="bankValue">Bank: --</span></div>
-    
-      <div style="display: flex; justify-content: center; gap: 10px; font-size: 0.65rem; color: #999;margin: 3px 0;">
-        <div><span id="samplerate">---.-kHz</span></div>
-        <div><span id="bitrate">---bit</span></div>
-        <div><span id="bitpersample">---kbps</span></div>
-        <div><span id="streamformat">----</span></div>
+    <div id="display" style="display: inline-block; padding: 5px; border: 2px solid #4CAF50; border-radius: 15px; background-color: #4a4a4a; font-size: 1.45rem; 
+      color: #AAA; width: 345px; text-align: center; white-space: nowrap; box-shadow: 0 0 20px #4CAF50;" onClick="flashBackground(); displayMode()">
+      
+      <div style="margin-bottom: 10px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; -webkit-text-stroke: 0.3px black; text-stroke: 0.3px black;">
+        <span id="textStationName"><b>STATIONNAME</b></span>
       </div>
       
-      <div><span id="stationNumber">Station: --</span></div>
-    </div>
+      <div style="width: 345px; margin-bottom: 10px;">
+        <div id="stationTextDiv" style="display: block; text-overflow: ellipsis; white-space: normal; font-size: 1.0rem; color: #999; margin-bottom: 10px; text-align: center; align-items: center; height: 4.2em; justify-content: center; overflow: hidden; line-height: 1.4em;">
+          <span id="stationText">STATIONTEXT</span>
+        </div>
+      </div>
+      
+      <div style="height: 1px; background-color: #4CAF50; margin: 5px 0;"></div>
+
+      
+      <div style="display: flex; justify-content: center; gap: 25px; font-size: 1.0rem; color: #999;">
+        <div><span id="bankValue">Bank: --</span></div>
+      
+        <div style="display: flex; justify-content: center; gap: 10px; font-size: 0.65rem; color: #999;margin: 3px 0;">
+          <div><span id="samplerate">---.-kHz</span></div>
+          <div><span id="bitrate">---bit</span></div>
+          <div><span id="bitpersample">---kbps</span></div>
+          <div><span id="streamformat">----</span></div>
+        </div>
+        
+        <div><span id="stationNumber">Station: --</span></div>
+      </div>
 
   </div>
   <br>
   <br>
- <script>
+  <script>
 
   var websocket;
 
@@ -376,47 +417,63 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
   }
 
-  function stationLoad(x) 
+  function changeStation(number) 
   {
-    connectWebSocket();
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "/update?station=" + x, false);
-    xhr.send();
+    if (websocket.readyState === WebSocket.OPEN) 
+    {
+      websocket.send("station:" + number);
+    } 
+    else 
+    {
+      console.log("WebSocket nie jest otwarty");
+    }
   }
-  
-  function bankLoad(x) 
+
+  function changeBank(number) 
   {
-    connectWebSocket();
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", "/update?bank=" + x, true);
-    xhr.send();
-   }
- 
+    if (websocket.readyState === WebSocket.OPEN) 
+    {
+      websocket.send("bank:" + number);
+    } 
+    else 
+    {
+      console.log("WebSocket nie jest otwarty");
+    }
+  }
+
+
   function displayMode() 
   {
-    fetch("/displayMode")
+    //fetch("/displayMode")
+    if (websocket.readyState === WebSocket.OPEN) 
+    {
+      websocket.send("displayMode");
+    } 
+    else 
+    {
+      console.log("WebSocket nie jest otwarty");
+    }
   }
   
   
   function connectWebSocket() 
   {
     websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
-
     websocket.onopen = function () 
     {
-        console.log("WebSocket polaczony");
+      console.log("WebSocket polaczony");
     };
     
     websocket.onclose = function (event) 
     {
-        console.log("WebSocket zamkniety. Proba ponownego polaczenia za 3 sekundy...");
-        setTimeout(connectWebSocket, 3000); // próba ponownego połączenia
+      console.log("WebSocket zamkniety. Proba ponownego polaczenia za 3 sekundy...");
+      setTimeout(connectWebSocket, 3000); // próba ponownego połączenia
     };
 
     websocket.onerror = function (error) 
     {
-        console.error("Blad WebSocket: ", error);
-        websocket.close(); // zamyka połączenie, by wywołać reconnect
+      console.error("Blad WebSocket: ", error);
+      websocket.close(); // zamyka połączenie, by wywołać reconnect
     };
     
     websocket.onmessage = function(event) 
@@ -522,8 +579,6 @@ const char index_html[] PROGMEM = R"rawliteral(
       // Pogrub numer
       numCell.dataset.stationNumber = numCell.innerText; // zapisz oryginalny numer
       numCell.innerHTML = `<b>${numCell.innerText}</b>`; 
-  
-    
     }
   }
   
@@ -545,7 +600,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 		  div.style.backgroundColor = originalColor;
 		  //textSpan.innerText = originalText;
       textSpan.innerHTML = `<b>${originalText}</b>`;
-	  }, 850); // czas w ms flasha
+	  }, 150); // czas w ms flasha
 	}
 
 
@@ -764,7 +819,9 @@ const char menu_html[] PROGMEM = R"rawliteral(
   </head>
   <body>
   <h2>ESP32 Web Radio - Menu</h2>
-  <br><button class="button" onclick="location.href='/fwupdate'">OTA Update</button><br>
+  <!-- <br><button class="button" onclick="location.href='/fwupdate'">OTA Update (Old)</button><br> -->
+  <!-- <br><button class="button" onclick="location.href='/info'">Info</button><br> -->
+  <br><button class="button" onclick="location.href='/ota'">OTA Update</button><br>
   <br><button class="button" onclick="location.href='/adc'">ADC Keyboard Settings</button><br>
   <br><button class="button" onclick="location.href='/list'">SD / SPIFFS Explorer</button><br>
   <br><button class="button" onclick="location.href='/editor'">Memory Bank Editor</button><br>
@@ -1102,6 +1159,227 @@ bool debugKeyboard = false;         // Wyłącza wywoływanie funkcji i zostawia
 bool adcKeyboardEnabled = false;    // Flaga właczajaca działanie klawiatury ADC
 
 
+String checkUTF8(const String& input) 
+{
+  String output = "";
+  const char* str = input.c_str();
+  int len = input.length();
+  int i = 0;
+
+  while (i < len) {
+    unsigned char c = str[i];
+
+    // 1-byte ASCII
+    if (c <= 0x7F) {
+      output += (char)c;
+      i++;
+    }
+    // 2-byte UTF-8
+    else if ((c & 0xE0) == 0xC0 && i + 1 < len &&
+             (str[i + 1] & 0xC0) == 0x80) {
+      output += str[i];
+      output += str[i + 1];
+      i += 2;
+    }
+    // 3-byte UTF-8
+    else if ((c & 0xF0) == 0xE0 && i + 2 < len &&
+             (str[i + 1] & 0xC0) == 0x80 &&
+             (str[i + 2] & 0xC0) == 0x80) {
+      output += str[i];
+      output += str[i + 1];
+      output += str[i + 2];
+      i += 3;
+    }
+    // 4-byte UTF-8
+    else if ((c & 0xF8) == 0xF0 && i + 3 < len &&
+             (str[i + 1] & 0xC0) == 0x80 &&
+             (str[i + 2] & 0xC0) == 0x80 &&
+             (str[i + 3] & 0xC0) == 0x80) {
+      output += str[i];
+      output += str[i + 1];
+      output += str[i + 2];
+      output += str[i + 3];
+      i += 4;
+    }
+    // Invalid byte or incomplete sequence
+    else {
+      output += '?';
+      i++;
+    }
+  }
+
+  return output;
+}
+
+bool isValidUtf8(const String& str) {
+  const unsigned char* bytes = (const unsigned char*)str.c_str();
+
+  while (*bytes) {
+    if (*bytes <= 0x7F) {
+      // ASCII (0xxxxxxx)
+      bytes++;
+    } else if ((*bytes & 0xE0) == 0xC0) {
+      // 2-byte sequence (110xxxxx 10xxxxxx)
+      if ((bytes[1] & 0xC0) != 0x80) return false;
+      bytes += 2;
+    } else if ((*bytes & 0xF0) == 0xE0) {
+      // 3-byte sequence (1110xxxx 10xxxxxx 10xxxxxx)
+      if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80) return false;
+      bytes += 3;
+    } else if ((*bytes & 0xF8) == 0xF0) {
+      // 4-byte sequence (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
+      if ((bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80 || (bytes[3] & 0xC0) != 0x80) return false;
+      bytes += 4;
+    } else {
+      return false; // Invalid leading byte
+    }
+  }
+
+  return true;
+}
+/*
+// Funkcja przetwarza tekst, zamieniając polskie znaki diakrytyczne
+void processText(String &text) {
+  for (int i = 0; i < text.length(); i++) {
+    switch (text[i]) {
+      case (char)0xC2:
+        switch (text[i + 1]) {
+          case (char)0xB3: text.setCharAt(i, 0xB3); break;  // Zamiana na "ł"
+          case (char)0x9C: text.setCharAt(i, 0x9C); break;  // Zamiana na "ś"
+          case (char)0x8C: text.setCharAt(i, 0x8C); break;  // Zamiana na "Ś"
+          case (char)0xB9: text.setCharAt(i, 0xB9); break;  // Zamiana na "ą"
+          case (char)0x9B: text.setCharAt(i, 0xEA); break;  // Zamiana na "ę"
+          case (char)0xBF: text.setCharAt(i, 0xBF); break;  // Zamiana na "ż"
+          case (char)0x9F: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź"
+        }
+        text.remove(i + 1, 1);
+        break;
+      case (char)0xC3:
+        switch (text[i + 1]) {
+          case (char)0xB1: text.setCharAt(i, 0xF1); break;  // Zamiana na "ń"
+          case (char)0xB3: text.setCharAt(i, 0xF3); break;  // Zamiana na "ó" Unicode UTF-8
+          case (char)0xBA: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź"
+          case (char)0xBB: text.setCharAt(i, 0xAF); break;  // Zamiana na "Ż"
+          case (char)0x93: text.setCharAt(i, 0xD3); break;  // Zamiana na "Ó" Unicode UTF-8
+        }
+        text.remove(i + 1, 1);
+        break;
+      case (char)0xC4:
+        switch (text[i + 1]) {
+          case (char)0x85: text.setCharAt(i, 0xB9); break;  // Zamiana na "ą" Unicode UTF-8
+          case (char)0x99: text.setCharAt(i, 0xEA); break;  // Zamiana na "ę" Unicode UTF-8
+          case (char)0x87: text.setCharAt(i, 0xE6); break;  // Zamiana na "ć" Unicode UTF-8
+          case (char)0x84: text.setCharAt(i, 0xA5); break;  // Zamiana na "Ą" Unicode UTF-8
+          case (char)0x98: text.setCharAt(i, 0xCA); break;  // Zamiana na "Ę" Unicode UTF-8
+          case (char)0x86: text.setCharAt(i, 0xC6); break;  // Zamiana na "Ć" Unicode UTF-8
+        }
+        text.remove(i + 1, 1);
+        break;
+      case (char)0xC5:
+        switch (text[i + 1]) {
+          case (char)0x82: text.setCharAt(i, 0xB3); break;  // Zamiana na "ł" Unicode UTF-8
+          case (char)0x84: text.setCharAt(i, 0xF1); break;  // Zamiana na "ń" Unicode UTF-8
+          case (char)0x9B: text.setCharAt(i, 0x9C); break;  // Zamiana na "ź" Unicode UTF-8
+          case (char)0xBB: text.setCharAt(i, 0xAF); break;  // Zamiana na "Ż" Unicode UTF-8
+          case (char)0xBC: text.setCharAt(i, 0xBF); break;  // Zamiana na "ż" Unicode UTF-8
+          case (char)0x83: text.setCharAt(i, 0xD1); break;  // Zamiana na "Ń" Unicode UTF-8
+          case (char)0x9A: text.setCharAt(i, 0x97); break;  // Zamiana na "Ś" Unicode UTF-8
+          case (char)0x81: text.setCharAt(i, 0xA3); break;  // Zamiana na "Ł" Unicode UTF-8
+          case (char)0xB9: text.setCharAt(i, 0xAC); break;  // Zamiana na "Ź" Unicode UTF-8
+          case (char)0xBA: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź" Unicode UTF-8
+        }
+        text.remove(i + 1, 1);
+        break;
+    }
+  }
+}
+*/
+
+// Funkcja przetwarza tekst, zamieniając polskie znaki diakrytyczne
+void processText(String &text) 
+{
+  for (int i = 0; i < text.length() - 1; i++) {
+    if (i + 1 >= text.length()) break; // zabezpieczenie przed wyjściem poza bufor
+
+    switch ((uint8_t)text[i]) {
+      case 0xC3:
+        switch ((uint8_t)text[i + 1]) {
+          case 0xB3: text.setCharAt(i, 0xF3); break;  // ó
+          case 0x93: text.setCharAt(i, 0xD3); break;  // Ó
+        }
+        text.remove(i + 1, 1);
+        break;
+
+      case 0xC4:
+        switch ((uint8_t)text[i + 1]) {
+          case 0x85: text.setCharAt(i, 0xB9); break;  // ą
+          case 0x84: text.setCharAt(i, 0xA5); break;  // Ą
+          case 0x87: text.setCharAt(i, 0xE6); break;  // ć
+          case 0x86: text.setCharAt(i, 0xC6); break;  // Ć
+          case 0x99: text.setCharAt(i, 0xEA); break;  // ę
+          case 0x98: text.setCharAt(i, 0xCA); break;  // Ę
+        }
+        text.remove(i + 1, 1);
+        break;
+
+      case 0xC5:
+        switch ((uint8_t)text[i + 1]) {
+          case 0x82: text.setCharAt(i, 0xB3); break;  // ł
+          case 0x81: text.setCharAt(i, 0xA3); break;  // Ł
+          case 0x84: text.setCharAt(i, 0xF1); break;  // ń
+          case 0x83: text.setCharAt(i, 0xD1); break;  // Ń
+          case 0x9B: text.setCharAt(i, 0x9C); break;  // ś
+          case 0x9A: text.setCharAt(i, 0x8C); break;  // Ś
+          case 0xBA: text.setCharAt(i, 0x9F); break;  // ź
+          case 0xB9: text.setCharAt(i, 0x8F); break;  // Ź
+          case 0xBC: text.setCharAt(i, 0xBF); break;  // ż
+          case 0xBB: text.setCharAt(i, 0xAF); break;  // Ż
+        }
+        text.remove(i + 1, 1);
+        break;
+    }
+  }
+}
+
+void win1250ToUtf8(String& input) {
+  String output = "";
+  const uint8_t* bytes = (const uint8_t*)input.c_str();
+
+  while (*bytes) {
+    uint8_t c = *bytes;
+    switch (c) {
+      case 0xA5: output += "Ą"; break;
+      case 0xB9: output += "ą"; break;
+      case 0xC6: output += "Ć"; break;
+      case 0xE6: output += "ć"; break;
+      case 0xCA: output += "Ę"; break;
+      case 0xEA: output += "ę"; break;
+      case 0xA3: output += "Ł"; break;
+      case 0xB3: output += "ł"; break;
+      case 0xD1: output += "Ń"; break;
+      case 0xF1: output += "ń"; break;
+      case 0xD3: output += "Ó"; break;
+      case 0xF3: output += "ó"; break;
+      case 0xA6: output += "Ś"; break;
+      case 0xB6: output += "ś"; break;
+      case 0xAF: output += "Ż"; break;
+      case 0xBF: output += "ż"; break;
+      case 0xAC: output += "Ź"; break;
+      case 0xBC: output += "ź"; break;
+      default:
+        if (c < 0x80) {
+          output += (char)c;
+        } else {
+          output += '?';
+        }
+        break;
+    }
+    bytes++;
+  }
+
+  input = output; // <-- modyfikujemy oryginalny String
+}
+
 
 void wsRefreshPage() // Funckja odswiezania strony za pomocą WebSocket
 {
@@ -1128,7 +1406,26 @@ void wsStationChange(uint8_t stationId)
 void wsStreamInfoRefresh()
 { 
   if (audio.isRunning() == true)
-  {
+  {  
+    Serial.print("web debug-- ws.stationtext$: ");
+    Serial.println(stationStringWeb);
+    
+    //checkUTF8(stationStringWeb);
+   
+    if (isValidUtf8(stationStringWeb)) 
+    {
+      Serial.println("stationStringWeb jest w UTF-8 - OK");
+    } 
+    else 
+    {
+      Serial.println("stationStringWeb NIE jest w UTF-8 — potrzebna konwersja!");
+      win1250ToUtf8(stationStringWeb);    // Konwersja
+    }
+  
+
+    Serial.print("web debug-- after check ws.stationtext$: ");
+    Serial.println(stationStringWeb);
+    
     ws.textAll("stationtext$" + stationStringWeb);  // znak podziału to $ aby uniknac problemow z adresami http: separatorem |. Jako znak separacji uzyty $
   }
   else
@@ -1282,9 +1579,6 @@ void fetchStationsFromServer()
   displayActive = true;
   u8g2.setFont(spleen6x12PL);
   u8g2.clearBuffer();
-  //u8g2.drawStr(21, 10, "Bank:");
-  //u8g2.drawStr(51, 10, String(bank_nr).c_str());
-  //u8g2.drawStr(21, 23, "Loading station from:");
   u8g2.setCursor(21, 23);
   u8g2.print("Loading BANK:" + String(bank_nr) + " stations from:");
   u8g2.sendBuffer();
@@ -1455,61 +1749,7 @@ void readEEPROM() // Funkcja kontrolna-debug, nie uzywan przez inne funkcje
   EEPROM.get(2, volumeValue); 
 }
 
-// Funkcja przetwarza tekst, zamieniając polskie znaki diakrytyczne
-void processText(String &text) {
-  for (int i = 0; i < text.length(); i++) {
-    switch (text[i]) {
-      case (char)0xC2:
-        switch (text[i + 1]) {
-          case (char)0xB3: text.setCharAt(i, 0xB3); break;  // Zamiana na "ł"
-          case (char)0x9C: text.setCharAt(i, 0x9C); break;  // Zamiana na "ś"
-          case (char)0x8C: text.setCharAt(i, 0x8C); break;  // Zamiana na "Ś"
-          case (char)0xB9: text.setCharAt(i, 0xB9); break;  // Zamiana na "ą"
-          case (char)0x9B: text.setCharAt(i, 0xEA); break;  // Zamiana na "ę"
-          case (char)0xBF: text.setCharAt(i, 0xBF); break;  // Zamiana na "ż"
-          case (char)0x9F: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź"
-        }
-        text.remove(i + 1, 1);
-        break;
-      case (char)0xC3:
-        switch (text[i + 1]) {
-          case (char)0xB1: text.setCharAt(i, 0xF1); break;  // Zamiana na "ń"
-          case (char)0xB3: text.setCharAt(i, 0xF3); break;  // Zamiana na "ó" Unicode UTF-8
-          case (char)0xBA: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź"
-          case (char)0xBB: text.setCharAt(i, 0xAF); break;  // Zamiana na "Ż"
-          case (char)0x93: text.setCharAt(i, 0xD3); break;  // Zamiana na "Ó" Unicode UTF-8
-        }
-        text.remove(i + 1, 1);
-        break;
-      case (char)0xC4:
-        switch (text[i + 1]) {
-          case (char)0x85: text.setCharAt(i, 0xB9); break;  // Zamiana na "ą" Unicode UTF-8
-          case (char)0x99: text.setCharAt(i, 0xEA); break;  // Zamiana na "ę" Unicode UTF-8
-          case (char)0x87: text.setCharAt(i, 0xE6); break;  // Zamiana na "ć" Unicode UTF-8
-          case (char)0x84: text.setCharAt(i, 0xA5); break;  // Zamiana na "Ą" Unicode UTF-8
-          case (char)0x98: text.setCharAt(i, 0xCA); break;  // Zamiana na "Ę" Unicode UTF-8
-          case (char)0x86: text.setCharAt(i, 0xC6); break;  // Zamiana na "Ć" Unicode UTF-8
-        }
-        text.remove(i + 1, 1);
-        break;
-      case (char)0xC5:
-        switch (text[i + 1]) {
-          case (char)0x82: text.setCharAt(i, 0xB3); break;  // Zamiana na "ł" Unicode UTF-8
-          case (char)0x84: text.setCharAt(i, 0xF1); break;  // Zamiana na "ń" Unicode UTF-8
-          case (char)0x9B: text.setCharAt(i, 0x9C); break;  // Zamiana na "ź" Unicode UTF-8
-          case (char)0xBB: text.setCharAt(i, 0xAF); break;  // Zamiana na "Ż" Unicode UTF-8
-          case (char)0xBC: text.setCharAt(i, 0xBF); break;  // Zamiana na "ż" Unicode UTF-8
-          case (char)0x83: text.setCharAt(i, 0xD1); break;  // Zamiana na "Ń" Unicode UTF-8
-          case (char)0x9A: text.setCharAt(i, 0x97); break;  // Zamiana na "Ś" Unicode UTF-8
-          case (char)0x81: text.setCharAt(i, 0xA3); break;  // Zamiana na "Ł" Unicode UTF-8
-          case (char)0xB9: text.setCharAt(i, 0xAC); break;  // Zamiana na "Ź" Unicode UTF-8
-          case (char)0xBA: text.setCharAt(i, 0x9F); break;  // Zamiana na "ź" Unicode UTF-8
-        }
-        text.remove(i + 1, 1);
-        break;
-    }
-  }
-}
+
 
 void calcNec() // Funkcja umozliwajaca przeliczanie odwrotne aby "udawac" przyciskami klawiatury komendy piltoa w standardzie NEC
 {
@@ -1537,47 +1777,17 @@ void calcNec() // Funkcja umozliwajaca przeliczanie odwrotne aby "udawac" przyci
   ir_code = reverse_bits(ir_code,32);     // rotacja bitów do porządku LSB-MSB jak w NEC        
 }
 
-// Obsługa wyświetlacza dla odtwarzanego strumienia radia internetowego
-void displayRadio() 
+void stationStringFormatting() // Funkcja aktulizaujaca dla scorllera stationString/stationName  **** stationStringScroll ****
 {
   if (displayMode == 0)
-  {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_fub14_tf);
-    //stationName = stationName.substring(0, stationNameLenghtCut - 1);
-    //u8g2.drawStr(24, 16, stationName.c_str());
-    u8g2.drawStr(24, 16, stationName.substring(0, stationNameLenghtCut - 1).c_str());
-    u8g2.drawRBox(1, 1, 21, 16, 4);  // Rbox pod numerem stacji
-    
-    // Funkcja wyswietlania numeru Banku na dole ekranu
-    u8g2.setFont(spleen6x12PL);
-    char BankStr[8];  
-    snprintf(BankStr, sizeof(BankStr), "Bank%02d", bank_nr); // Formatujemy numer banku do postacji 00
-    // Wyswietlamy numer Banku w dolnej linijce
-    u8g2.drawBox(154, 54, 1, 12);  // dorysowujemy 1px pasek przed napisem "Bank" dla symetrii
-    u8g2.setDrawColor(0);
-    u8g2.setCursor(155, 63);  // Pozycja napisu Bank0x na dole ekranu
-    u8g2.print(BankStr);
-
-
-    u8g2.setDrawColor(0);
-    u8g2.setFont(u8g2_font_spleen8x16_mr);
-    char StationNrStr[3];
-    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr);  //Formatowanie informacji o stacji i banku do postaci 00
-    u8g2.setCursor(4, 14);                                            // Pozycja numeru stacji na gorze po lewej ekranu
-    u8g2.print(StationNrStr);
-    u8g2.setDrawColor(1);
-    
-    u8g2.setFont(spleen6x12PL);
-        
-    // Jesli stacja nie nadaje stationString to podmieniamy pusty stationString na nazwę staji - stationNameStream
-    if (stationString == "") // Jeżeli stationString jest pusty i stacja go nie nadaje
+  {   
+    if (stationString == "") // Jeżeli stationString jest pusty i stacja go nie nadaje to podmieniamy pusty stationString na nazwę staji - stationNameStream
     {    
-      if (stationNameStream == "") // jezeli nie ma równiez stationName
+      if (stationNameStream == "") // jezeli nie ma równiez stationName to wstawiamy 3 kreseczki
       { 
         stationStringScroll = "---" ;
         stationStringWeb = "---" ;
-      } // wstawiamy trzy kreseczki do wyswietlenia
+      } 
       else // jezeli jest station name to prawiamy w "-- NAZWA --" i wysylamy do scrollera
       { 
         stationStringScroll = ("-- " + stationNameStream + " --");
@@ -1589,39 +1799,23 @@ void displayRadio()
       stationStringWeb = stationString;
       processText(stationString);  // przetwarzamy polsie znaki
       stationStringScroll = stationString + "    "; // dodajemy separator do przewijanego tekstu jesli się nie miesci na ekranie
-    }
-              
-    //Liczymy długość napisu stationStringScroll 
-    Serial.print("### StationStringScroll lenght [chars]:");
-    Serial.println(stationStringScroll.length());
-        
+    }             
+        //Liczymy długość napisu stationStringScroll 
+    Serial.print("### StationStringScroll lenght [chars]:");  Serial.println(stationStringScroll.length());
     stationStringScrollWidth = stationStringScroll.length() * 6;
+    Serial.print("### Station String Scroll Width (lenght * 6) [px]:"); Serial.println(stationStringScrollWidth);
+	  
+    Serial.print("debug -> Display0 (VU) stationStringScroll: ");
+    Serial.println(stationStringScroll);
 
-    Serial.print("### Station String Scroll Width (lenght * 6) [px]:");
-    Serial.println(stationStringScrollWidth);
 
-    u8g2.drawLine(0, 52, 255, 52);
-    
-    // Przeliczamy Hz na kHz
-    int SampleRate = sampleRateString.toInt();
-    int SampleRateRest = SampleRate % 1000;
-    SampleRateRest = SampleRateRest / 100;
-    SampleRate = SampleRate / 1000;
-    
-    String displayString = String(SampleRate) + "." + String(SampleRateRest) + "kHz " + bitsPerSampleString + "bit " + bitrateString + "kbps";
-    u8g2.setFont(spleen6x12PL);
-    u8g2.drawStr(0, 63, displayString.c_str());
+
   }
   else if (displayMode == 1) // Tryb wświetlania zegara z 1 linijką radia na dole
   {
-    u8g2.clearBuffer();
-    u8g2.setDrawColor(1);
-    u8g2.setFont(spleen6x12PL);
-    u8g2.drawLine(0, 50, 255, 50); // Linia separacyjna zegar, dolna linijka radia
-
     char StationNrStr[3];
-    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr); 
-    //stationName = stationName.substring(0, 25);
+    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr);  //Formatowanie informacji o stacji i banku do postaci 00
+
     int StationNameEnd = stationName.indexOf("  "); // Wycinamy nazwe stacji tylko do miejsca podwojnej spacji 
     stationName = stationName.substring(0, StationNameEnd);
  
@@ -1635,6 +1829,7 @@ void displayRadio()
       else                                  // jezeli jest brak "stationString" ale jest "stationName" to składamy NR.Nazwa stacji z pliku, nadawany stationNameStream + separator przerwy
       { 
         stationStringScroll = String(StationNrStr) + "." + stationName + ", " + stationNameStream + "      ";
+        stationStringWeb = stationNameStream;
       }
     }
     else //stationString != "" -> ma wartość
@@ -1651,32 +1846,7 @@ void displayRadio()
     stationStringScrollWidth = stationStringScroll.length() * 6;
   }
   else if (displayMode == 2) // Tryb wświetlania mode 2 - 3 linijki tekstu
-  {
-    u8g2.clearBuffer();
-    u8g2.setFont(spleen6x12PL);
-    //stationName = stationName.substring(0, stationNameLenghtCut);
-    //u8g2.drawStr(24, 11, stationName.c_str());
-    u8g2.drawStr(24, 11, stationName.substring(0, stationNameLenghtCut).c_str()); // Przyciecie i wyswietlenie dzieki temu nie zmieniamy zawartosci zmiennej stationName
-    u8g2.drawRBox(1, 1, 18, 13, 4);  // Rbox pod numerem stacji
-    
-    // Funkcja wyswietlania numeru Banku na dole ekranu
-    char BankStr[8];  
-    snprintf(BankStr, sizeof(BankStr), "Bank%02d", bank_nr); // Formatujemy numer banku do postacji 00
-
-    // Wyswietlamy numer Banku w dolnej linijce
-    u8g2.drawBox(154, 54, 1, 12);  // dorysowujemy 1px pasek przed napisem "Bank" dla symetrii
-    u8g2.setDrawColor(0);
-    u8g2.setCursor(155, 63);  // Pozycja napisu Bank0x na dole ekranu
-    u8g2.print(BankStr);
-
-
-    u8g2.setDrawColor(0);
-    char StationNrStr[3];
-    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr);  //Formatowanie informacji o stacji i banku do postaci 00
-    u8g2.setCursor(4, 11);                                            // Pozycja numeru stacji na gorze po lewej ekranu
-    u8g2.print(StationNrStr);
-    u8g2.setDrawColor(1);
-             
+  {             
     // Jesli stacja nie nadaje stationString to podmieniamy pusty stationString na nazwę staji - stationNameStream
     if (stationString == "") // Jeżeli stationString jest pusty i stacja go nie nadaje
     {    
@@ -1698,6 +1868,93 @@ void displayRadio()
       stationStringScroll = stationString;
     }
 
+   
+  }
+}
+
+// Obsługa wyświetlacza dla odtwarzanego strumienia radia internetowego
+void displayRadio() 
+{
+  if (displayMode == 0)
+  {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_fub14_tf);
+    u8g2.drawStr(24, 16, stationName.substring(0, stationNameLenghtCut - 1).c_str());
+    u8g2.drawRBox(1, 1, 21, 16, 4);  // Rbox pod numerem stacji
+    
+    // Funkcja wyswietlania numeru Banku na dole ekranu
+    u8g2.setFont(spleen6x12PL);
+    char BankStr[8];  
+    snprintf(BankStr, sizeof(BankStr), "Bank%02d", bank_nr); // Formatujemy numer banku do postacji 00
+
+    // Wyswietlamy numer Banku w dolnej linijce
+    u8g2.drawBox(154, 54, 1, 12);  // dorysowujemy 1px pasek przed napisem "Bank" dla symetrii
+    u8g2.setDrawColor(0);
+    u8g2.setCursor(155, 63);  // Pozycja napisu Bank0x na dole ekranu
+    u8g2.print(BankStr);
+
+
+    u8g2.setDrawColor(0);
+    u8g2.setFont(u8g2_font_spleen8x16_mr);
+    char StationNrStr[3];
+    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr);  //Formatowanie informacji o stacji i banku do postaci 00
+    u8g2.setCursor(4, 14);                                            // Pozycja numeru stacji na gorze po lewej ekranu
+    u8g2.print(StationNrStr);
+    u8g2.setDrawColor(1);
+    
+    u8g2.setFont(spleen6x12PL);
+        
+    stationStringFormatting(); //Formatujemy stationString wyswietlany przez funkcję Scrollera
+
+    u8g2.drawLine(0, 52, 255, 52);
+    
+    // Przeliczamy Hz na kHz
+    int SampleRate = sampleRateString.toInt();
+    int SampleRateRest = SampleRate % 1000;
+    SampleRateRest = SampleRateRest / 100;
+    SampleRate = SampleRate / 1000;
+    
+    String displayString = String(SampleRate) + "." + String(SampleRateRest) + "kHz " + bitsPerSampleString + "bit " + bitrateString + "kbps";
+    u8g2.setFont(spleen6x12PL);
+    u8g2.drawStr(0, 63, displayString.c_str());
+  }
+  else if (displayMode == 1) // Tryb wświetlania zegara z 1 linijką radia na dole
+  {
+    u8g2.clearBuffer();
+    u8g2.setDrawColor(1);
+    u8g2.setFont(spleen6x12PL);
+    u8g2.drawLine(0, 50, 255, 50); // Linia separacyjna zegar, dolna linijka radia
+
+    stationStringFormatting(); //Formatujemy stationString wyswietlany przez funkcję Scrollera
+
+  }
+  else if (displayMode == 2) // Tryb wświetlania mode 2 - 3 linijki tekstu
+  {
+    u8g2.clearBuffer();
+    u8g2.setFont(spleen6x12PL);
+    u8g2.drawStr(24, 11, stationName.substring(0, stationNameLenghtCut).c_str()); // Przyciecie i wyswietlenie dzieki temu nie zmieniamy zawartosci zmiennej stationName
+    u8g2.drawRBox(1, 1, 18, 13, 4);  // Rbox pod numerem stacji
+    
+    // Funkcja wyswietlania numeru Banku na dole ekranu
+    char BankStr[8];  
+    snprintf(BankStr, sizeof(BankStr), "Bank%02d", bank_nr); // Formatujemy numer banku do postacji 00
+
+    // Wyswietlamy numer Banku w dolnej linijce
+    u8g2.drawBox(154, 54, 1, 12);  // dorysowujemy 1px pasek przed napisem "Bank" dla symetrii
+    u8g2.setDrawColor(0);
+    u8g2.setCursor(155, 63);  // Pozycja napisu Bank0x na dole ekranu
+    u8g2.print(BankStr);
+
+
+    u8g2.setDrawColor(0);
+    char StationNrStr[3];
+    snprintf(StationNrStr, sizeof(StationNrStr), "%02d", station_nr);  //Formatowanie informacji o stacji i banku do postaci 00
+    u8g2.setCursor(4, 11);                                            // Pozycja numeru stacji na gorze po lewej ekranu
+    u8g2.print(StationNrStr);
+    u8g2.setDrawColor(1);
+
+    stationStringFormatting(); //Formatujemy stationString wyswietlany przez funkcję Scrollera
+    
     u8g2.drawLine(0, 52, 255, 52);
     
     // Przeliczamy Hz na kHz
@@ -1729,7 +1986,7 @@ void audio_info(const char *info)
     bitrateString = String(bitrateStringInt);
     bitratePresent = true;
 
-    audioInfoRefresh = true;
+    audioInfoRefresh2 = true;
     wsAudioRefresh = true;
   }
 
@@ -1893,15 +2150,9 @@ void bankMenuDisplay()
 // =========== Funkcja do obsługi przycisków enkoderów, debouncing i długiego naciśnięcia ==============//
 
 void handleButtons() {
-  static unsigned long buttonPressTime1 = 0;  // Zmienna do przechowywania czasu naciśnięcia przycisku
-  static bool isButton1Pressed = false;       // Flaga do śledzenia, czy przycisk jest wciśnięty
-  static bool action1Taken = false;           // Flaga do śledzenia, czy akcja została wykonana
-                                              // static unsigned long lastPressTime = 0;    // Zmienna do kontrolowania debouncingu (ostatni czas naciśnięcia)
-
   static unsigned long buttonPressTime2 = 0;  // Zmienna do przechowywania czasu naciśnięcia przycisku enkodera 2
   static bool isButton2Pressed = false;       // Flaga do śledzenia, czy przycisk enkodera 2 jest wciśnięty
   static bool action2Taken = false;           // Flaga do śledzenia, czy akcja dla enkodera 2 została wykonana
-
 
   static unsigned long lastPressTime = 0;  // Zmienna do kontrolowania debouncingu (ostatni czas naciśnięcia)
   const unsigned long debounceDelay = 50;  // Opóźnienie debouncingu
@@ -2060,16 +2311,10 @@ void readVolumeFromSD()
 
 void saveVolumeOnSD() 
 {
- /*
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_fub14_tf); // cziocnka 14x11
-  u8g2.drawStr(1, 33, "Saving volume settings"); // 8 znakow  x 11 szer
-  u8g2.sendBuffer();
- */ 
-  volumeBufferValue = volumeValue;
+  volumeBufferValue = volumeValue; // Wyrownanie wartosci bufora Volume i Volume przy zapisie
   
   // Sprawdź, czy plik volume.txt istnieje
-  Serial.print("Volume: ");
+  Serial.print("Zaspis do pliku wartosci Volume: ");
   Serial.println(volumeValue); 
   
   // Sprawdź, czy plik istnieje
@@ -2107,7 +2352,7 @@ void saveVolumeOnSD()
       Serial.println("Błąd podczas tworzenia pliku volume.txt.");
      }
   }
-  if (noSDcard == true) {EEPROM.write(2,volumeValue); EEPROM.commit();}
+  if (noSDcard == true) {EEPROM.write(2,volumeValue); EEPROM.commit(); Serial.println("Zapis volume do EEPROM");}
 }
 
 void drawSignalPower(uint8_t xpwr, uint8_t ypwr, bool print)
@@ -2584,18 +2829,6 @@ void displayPowerSave(bool saveON)
 // Funkcja wywoływana co sekundę przez timer do aktualizacji czasu na wyświetlaczu
 void updateTimer() 
 {
-   // Wypełnij spacjami, aby wyczyścić pole
-  //u8g2.drawStr(208, 63, "         "); // czyszczenie pola zegara
-  //u8g2.drawStr(128, 63, "    "); // czyszczenie pola FLAC/MP3/AAC
-
-  // Zwiększ licznik sekund
-  seconds++;
-
-  // Wyświetl aktualny czas w sekundach
-  // Konwertuj sekundy na minutę i sekundy
-  unsigned int minutes = seconds / 60;
-  unsigned int remainingSeconds = seconds % 60;
-
   u8g2.setDrawColor(1);  // Ustaw kolor na biały
 
   if (timeDisplay == true) 
@@ -2618,18 +2851,7 @@ void updateTimer()
         //Serial.println("Gram AAC");
       }
     }
-    /*
-    if ((currentOption == PLAY_FILES) && (bitratePresent == true)) {
-      // Formatuj czas jako "mm:ss"
-      char timeString[10];
-      snprintf(timeString, sizeof(timeString), "%02um:%02us", minutes, remainingSeconds);
-      u8g2.drawStr(210, 63, timeString);
-      u8g2.sendBuffer();
-    }
-    */
 
-    //if ((currentOption == INTERNET_RADIO) && ((mp3 == true) || (flac == true) || (aac == true) || (vorbis == true))) 
-    //if ((currentOption == INTERNET_RADIO) && (timeDisplay == true) && (audio.isRunning() == true))
     if ((timeDisplay == true) && (audio.isRunning() == true))
     {
       // Struktura przechowująca informacje o czasie
@@ -2945,46 +3167,81 @@ void vuMeter()
   }   
 }
 
+void displayClearUnderScroller() // Funkcja odpwoiedzialna za przewijanie informacji strem tittle lub stringstation
+{
+  if (displayMode == 0) // Tryb normalny Mode 0- radio
+  {
+    u8g2.setDrawColor(1);
+    u8g2.setFont(spleen6x12PL);
+    u8g2.drawStr(0,yPositionDisplayScrollerMode0, "                                           "); //43 spacje - czyszczenie ekranu   
+    //u8g2.setDrawColor(0);
+    //u8g2.drawBox(0,yPositionDisplayScrollerMode0,255,12);
+    //u8g2.setDrawColor(1);
+  } 
+  else if (displayMode == 1)  // Tryb zegara - Mode 1
+  {
+    u8g2.drawStr(0,yPositionDisplayScrollerMode1, "                                           "); //43 znaki czyszczenie ekranu
+  }
+  else if (displayMode == 2)  // Tryb mały tekst - Mode 2
+  {
+    u8g2.setDrawColor(1);
+    u8g2.setFont(spleen6x12PL);   
+    u8g2.drawStr(0,yPositionDisplayScrollerMode2, "                                           "); //43 znaki czyszczenie ekranu
+    u8g2.drawStr(0,yPositionDisplayScrollerMode2 + 12, "                                           "); //43 znaki czyszczenie ekranu
+    u8g2.drawStr(0,yPositionDisplayScrollerMode2 + 12 + 12, "                                           "); //43 znaki czyszczenie ekranu
+  }
+  u8g2.sendBuffer();  // rysujemy całą zawartosc ekranu.  
+}
+
 void displayRadioScroller() // Funkcja odpwoiedzialna za przewijanie informacji strem tittle lub stringstation
 {
-
-
-  if (displayMode == 0) // Tryb normalny - radio
+  // Jesli zmieniła sie dlugosc wyswietlanego stationString to wyczysc ekran OLED w miescach Scrollera
+  if (stationStringScroll.length() != stationStringScrollLength) 
   {
+    //Serial.print("debug -- czyscimy obszar scrollera stationStringScrollLength - stara wartosc: ");
+    //Serial.print(stationStringScrollLength);
+    //Serial.print(" <-> nowa wartosc: ");
+    //Serial.println(stationStringScroll.length());
+    
+    stationStringScrollLength = stationStringScroll.length();
+    displayClearUnderScroller();
+  }
 
-    if (stationStringScroll.length() > 42) 
-    {
-
+  if (displayMode == 0) // Tryb normalny - Mode 0, radio + VUmeter
+  {
+    if (stationStringScroll.length() > maxStationVisibleStringScrollLength) //42 + 4 znaki spacji separatora. Realnie widzimy 42 znaki
+    {    
       xPositionStationString = offset;
       u8g2.setFont(spleen6x12PL);
       u8g2.setDrawColor(1);
       do {
-        u8g2.drawStr(xPositionStationString, 33, stationStringScroll.c_str());
+        u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode0, stationStringScroll.c_str());
         xPositionStationString = xPositionStationString + stationStringScrollWidth;
       } while (xPositionStationString < 256);
       
       offset = offset - 1;
-      if (offset < (65535 - stationStringScrollWidth)) {
+      if (offset < (65535 - stationStringScrollWidth)) { 
         offset = 0;
       }
 
     } else {
       xPositionStationString = 0;
       u8g2.setDrawColor(1);
-      u8g2.setFont(spleen6x12PL);
-      u8g2.drawStr(xPositionStationString, 33, stationStringScroll.c_str());
+      u8g2.setFont(spleen6x12PL);    
+      u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode0, stationStringScroll.c_str());
       
     }
   } 
   else if (displayMode == 1)  // Tryb zegara
   {
-    if (stationStringScroll.length() > 42) {
-
+    
+    if (stationStringScroll.length() > maxStationVisibleStringScrollLength) 
+    {     
       xPositionStationString = offset;
       u8g2.setFont(spleen6x12PL);
       u8g2.setDrawColor(1);
       do {
-        u8g2.drawStr(xPositionStationString, 61, stationStringScroll.c_str());
+        u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode1, stationStringScroll.c_str());
 
         xPositionStationString = xPositionStationString + stationStringScrollWidth;
       } while (xPositionStationString < 256);
@@ -2999,18 +3256,18 @@ void displayRadioScroller() // Funkcja odpwoiedzialna za przewijanie informacji 
     {
       xPositionStationString = 0;
       u8g2.setDrawColor(1);
-      u8g2.setFont(spleen6x12PL);
-      u8g2.drawStr(xPositionStationString, 61, stationStringScroll.c_str());
+      u8g2.setFont(spleen6x12PL);       
+      u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode1, stationStringScroll.c_str());
     }
 
   }
-  else if (displayMode == 2)  // Tryb mały tekst
+  else if (displayMode == 2)  // Tryb Mode 2, Radio, 3 linijki station tekst
   {
 
     // Parametry do obługi wyświetlania w 3 kolejnych wierszach z podzialem do pełnych wyrazów
     const int maxLineLength = 41;  // Maksymalna długość jednej linii w znakach
     String currentLine = "";       // Bieżąca linia
-    int yPosition = 25;            // Początkowa pozycja Y
+    int yPosition = yPositionDisplayScrollerMode2; // Początkowa pozycja Y
 
 
     // Podziel tekst na wyrazy
@@ -3053,13 +3310,7 @@ void displayRadioScroller() // Funkcja odpwoiedzialna za przewijanie informacji 
       u8g2.setFont(spleen6x12PL);
       u8g2.drawStr(0, yPosition, currentLine.c_str());
     }
-
-
-
   }
-
-
-
 }
 
 //void handleKeyboard(void* pvParameters)
@@ -3167,16 +3418,6 @@ void handleKeyboard()
          ir_code = rcCmdOk; // Przycisk Auto TUning udaje OK
           bit_count = 32;
           calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC
-         
-         // if (bankMenuEnable == true)
-         // {
-         //   station_nr = 1;
-         //   fetchStationsFromServer();
-         //   bankMenuEnable = false;
-         // }
-         // changeStation(); 
-         // displayRadio();
-         // u8g2.sendBuffer();
         }
         else if ((debugKeyboard == false) && (key == 13)) // Przycisk Auto - przełaczanie tryb Zegar/Radio
         { 
@@ -3242,7 +3483,6 @@ void volumeDisplay()
 
 void volumeUp()
 {
-  //volumeBufferValue = volumeValue;
   volumeSet = true;
   timeDisplay = false;
   displayActive = true;
@@ -3272,7 +3512,6 @@ void volumeUp()
 
 void volumeDown()
 {
-  //volumeBufferValue = volumeValue;
   volumeSet = true;
   timeDisplay = false;
   displayActive = true;
@@ -3296,6 +3535,25 @@ void volumeDown()
   if (maxVolume == 21) { u8g2.drawRBox(23, 44, volumeValue * 10, 10, 2);}  // Progress bar głosnosci
   u8g2.sendBuffer();
   wsVolumeChange(volumeValue); // wyślij aktualizację przez WebSocket
+}
+
+void clearFlags()  // Kasuje wszystkie flagi przebywania w menu, funkcjach itd. Pozwala pwrócic do wyswietlania ekranu głownego
+{
+  //displayDimmer(0);
+  debugKeyboard = false;
+  //menuEnable = false;
+  displayActive = false;
+  timeDisplay = true;
+  listedStations = false;
+  volumeSet = false;
+  bankMenuEnable = false;
+  bankNetworkUpdate = false;
+  equalizerMenuEnable = false;
+  rcInputDigitsMenuEnable = false;
+  rcInputDigit1 = 0xFF; // czyscimy cyfre 1, flaga pustej zmiennej to FF
+  rcInputDigit2 = 0xFF; // czyscimy cyfre 2, flaga pustej zmiennej to FF
+  station_nr = stationFromBuffer;
+  bank_nr = previous_bank_nr;  
 }
 
 
@@ -3348,13 +3606,47 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         volumeValue = newVolume;
         volumeDisplay();   // wyswietle wartosci na OLED i aktualizacja obiektu audio
       }
+      else if (msg.startsWith("station:")) 
+      {
+        int newStation = msg.substring(8).toInt();
+        station_nr = newStation;
+        
+        ir_code = rcCmdOk; // Przypisujemy kod polecenia z pilota
+        bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
+        calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC    
+      }
+      else if (msg.startsWith("bank:")) 
+      {
+        int newBank = msg.substring(5).toInt();
+        bank_nr = newBank;
+        
+        //bankMenuEnable = true;        
+        //displayStartTime = millis();
+        //timeDisplay = false;
+        
+        bankMenuDisplay();
+        fetchStationsFromServer();
+        clearFlags();
+        
+        station_nr = 1;
+        
+        //Zatwirdzenie zmiany stacji
+        ir_code = rcCmdOk; // Przypisujemy kod polecenia z pilota
+        bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
+        calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC    
+        
+      }
+      else if (msg.startsWith("displayMode")) 
+      {
+        ir_code = rcCmdSrc; // Udajemy kod pilota SRC - zmiana trybu wyswietlacza 
+        bit_count = 32;
+        calcNec();          // Przeliczamy kod pilota na pełny oryginalny kod NEC
+      }
+
     }
   }
 
 }
-
-
-
 
 void bufforAudioInfo()
 {
@@ -3650,7 +3942,7 @@ void recoveryModeCheck()
         if (digitalRead(DT_PIN2) == HIGH) 
         {
           recoveryMode++;
-          if (recoveryMode > 2) {recoveryMode =2;}
+          if (recoveryMode > 1) {recoveryMode =1;}
         }
         else
         {
@@ -3664,20 +3956,20 @@ void recoveryModeCheck()
       {
         u8g2.drawStr(1,28, ">> RESET BANK=1, STATION=1 <<");
         u8g2.drawStr(1,42, "   RESET WIFI SSID, PASSWD   ");  
-        u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");  
+       // u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");  
       }
       else if (recoveryMode == 1)
       {
         u8g2.drawStr(1,28, "   RESET BANK=1, STATION=1   ");
         u8g2.drawStr(1,42, ">> RESET WIFI SSID, PASSWD <<");      
-        u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");
+       // u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");
       }
       
       else if (recoveryMode == 2)
       {
         u8g2.drawStr(1,28, "   RESET BANK=1, STATION=1   ");
         u8g2.drawStr(1,42, "   RESET WIFI SSID, PASSWD   ");      
-        u8g2.drawStr(1,56, ">> WEB UPDATE PORTAL       <<");
+       // u8g2.drawStr(1,56, ">> WEB UPDATE PORTAL       <<");
       }    
       u8g2.sendBuffer();
       
@@ -3722,6 +4014,7 @@ void recoveryModeCheck()
 
       }
       prev_CLK_state2 = CLK_state2;
+      delay(200);
     }   
   } 
 }
@@ -3789,24 +4082,6 @@ void displayDimmerTimer()
 }
 
 
-void clearFlags()  // Kasuje wszystkie flagi przebywania w menu, funkcjach itd. Pozwala pwrócic do wyswietlania ekranu głownego
-{
-  //displayDimmer(0);
-  debugKeyboard = false;
-  //menuEnable = false;
-  displayActive = false;
-  timeDisplay = true;
-  listedStations = false;
-  volumeSet = false;
-  bankMenuEnable = false;
-  bankNetworkUpdate = false;
-  equalizerMenuEnable = false;
-  rcInputDigitsMenuEnable = false;
-  rcInputDigit1 = 0xFF; // czyscimy cyfre 1, flaga pustej zmiennej to FF
-  rcInputDigit2 = 0xFF; // czyscimy cyfre 2, flaga pustej zmiennej to FF
-  station_nr = stationFromBuffer;
-  bank_nr = previous_bank_nr;  
-}
 
 void handleEncoder2StationsVolumeClick()
 {
@@ -4490,7 +4765,7 @@ void webUrlStationPlay()
     
   if (url2play != "") 
   {
-    url2play.trim();                      // Usuwamy białe znaki na początku i końcu
+    url2play.trim(); // Usuwamy białe znaki na początku i końcu
   }
   else
   {
@@ -4542,7 +4817,7 @@ String stationBankListHtmlMobile()
   
   html1 += "<p>Volume: <span id='textSliderValue'>--</span></p>" + String("\n");
   html1 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='1' step='1' class='slider'></p>" + String("\n");
-  html1 += "<p>Bank selection:</p>" + String("\n");
+  html1 += "<p>Memory Bank Selection:</p>" + String("\n");
     
   html1 += "<p>";
   for (int i = 1; i < 17; i++) // Przyciski Banków
@@ -4550,11 +4825,11 @@ String stationBankListHtmlMobile()
     
     if (i == bank_nr)
     {
-      html1 += "<button class='buttonBankSelected' onClick=\"bankLoad('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
+      html1 += "<button class='buttonBankSelected' onClick=\"changeBank('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
     }
     else
     {
-      html1 += "<button class=\"buttonBank\" onClick=\"bankLoad('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
+      html1 += "<button class=\"buttonBank\" onClick=\"changeBank('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
     }
     if (i == 8) {html1 += "</p><p>";}
   }
@@ -4562,8 +4837,7 @@ String stationBankListHtmlMobile()
   html1 += "<center>"; 
  
   html1 += "<table>";
-  //html += "<tr><th colspan=\"2\" align=\"left\">Bank " + String(bank_nr) + " stations:</th></tr>";
-  
+
 
   for (int i = 0; i < stationsCount; i++) // lista stacji
   {
@@ -4577,7 +4851,7 @@ String stationBankListHtmlMobile()
     
     html1 += "<tr>";
     html1 += "<td><p class='stationNumberList'>" + String(i + 1) + "</p></td>";
-    html1 += "<td><p class='stationList' onClick=\"stationLoad('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
+    html1 += "<td><p class='stationList' onClick=\"changeStation('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
     html1 += "</tr>" + String("\n");
           
   }
@@ -4586,13 +4860,9 @@ String stationBankListHtmlMobile()
   html1 += "</div>" + String("\n");
 
   html1 += "<p style=\"font-size: 0.8rem;\">Web Radio, mobile, Evo: " + String(softwareRev) + "</p>" + String("\n");
-  //html += "<p style=\"font-size: 0.8rem;\"><a href=\"list\">SD CARD, </a><a href='/fwupdate'>OTA UPDATE, </a><a href='/config'>CONFIG</a></p>" + String("\n");
   html1 += "<p style='font-size: 0.8rem;'>IP: "+ currentIP + "</p>" + String("\n");
   
-    
-  //html1 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
   html1 += "<a href='/menu' class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1;color: white; width: 65px; border: 1px solid black; display: inline-block; border-radius: 5px; text-decoration: none;'>Menu</a>";
-  //html1 += "<button class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1; width: 65px;'>Menu</button>";
   html1 += "</center></body></html>";
   
   return html1;
@@ -4602,12 +4872,10 @@ String stationBankListHtmlPC()
 {
   String html2;
   
-  //html2 += "<p>Volume: <span id='textSliderValue'>%%SLIDERVALUE%%</span></p>" + String("\n");
+
   html2 += "<p>Volume: <span id='textSliderValue'>--</span></p>" + String("\n");
-  //html2 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='%%SLIDERVALUE%%' step='1' class='slider'></p>" + String("\n");
   html2 += "<p><input type='range' onchange='updateSliderVolume(this)' id='volumeSlider' min='1' max='" + String(maxVolume) + "' value='1' step='1' class='slider'></p>" + String("\n");
-  //html2 += "<br>";
-  html2 += "<p>Bank selection:</p>" + String("\n");
+  html2 += "<p>Memory Bank Selection:</p>" + String("\n");
   
   
   html2 += "<p>";
@@ -4616,11 +4884,11 @@ String stationBankListHtmlPC()
     
     if (i == bank_nr)
     {
-      html2 += "<button class=\"buttonBankSelected\" onClick=\"bankLoad('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
+      html2 += "<button class=\"buttonBankSelected\" onClick=\"changeBank('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
     }
     else
     {
-      html2 += "<button class=\"buttonBank\" onClick=\"bankLoad('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
+      html2 += "<button class=\"buttonBank\" onClick=\"changeBank('" + String(i) + "');\" id=\"Bank\">" + String(i) + "</button>" + String("\n");
     }
   }
   
@@ -4643,7 +4911,6 @@ String stationBankListHtmlPC()
     if ((i == 0) || (i == 25) || (i == 50) || (i == 75))
     { 
       html2 += "<table>" + String("\n");
-      //html += "<tr><th>No</th><th>Station</th></tr>" + String("\n");
     } 
     
     // 0-98   >98
@@ -4651,10 +4918,8 @@ String stationBankListHtmlPC()
                  
     html2 += "<tr>";
     html2 += "<td><p class='stationNumberList'>" + String(i + 1) + "</p></td>";
-    html2 += "<td><p class='stationList' onClick=\"stationLoad('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
-    //html += "<td><p class='stationList' onClick=\"stationLoad('" + String(i + 1) +  "'); highlightStation(" + String(i + 1) + "); \">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
+    html2 += "<td><p class='stationList' onClick=\"changeStation('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
     html2 += "</tr>" + String("\n");
-    
 
     if ((i == 24) || (i == 49) || (i == 74)) //||(i == 98))
     { 
@@ -4666,17 +4931,14 @@ String stationBankListHtmlPC()
   html2 += "</table>" + String("\n");
   html2 += "</div>" + String("\n");
   html2 += "<p style=\"font-size: 0.8rem;\">Web Radio, desktop, Evo: " + String(softwareRev) + "</p>" + String("\n");
-  //html += "<p style=\"font-size: 0.8rem;\"><a href=\"list\">SD CARD, </a><a href='/fwupdate'>OTA UPDATE, </a><a href='/config'>CONFIG</a></p>" + String("\n");
   html2 += "<p style='font-size: 0.8rem;'>IP: " + currentIP + "</p>" + String("\n");
-  //html2 += "<p style='font-size: 0.8rem;'><a href='/menu'>MENU</a></p>" + String("\n");
-  //html2 += "<button class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1; width: 65px;'>Menu</button>";
   html2 += "<a href='/menu' class='button' style='padding: 0.2rem; font-size: 0.7rem; height: auto; line-height: 1;color: white; width: 65px; border: 1px solid black; display: inline-block; border-radius: 5px; text-decoration: none;'>Menu</a>";
   html2 += "</center></body></html>"; 
 
   return html2;
 }
 
-
+/*
 String stationBankListHtml(bool mobilePage)
 {
   String html3;
@@ -4733,7 +4995,6 @@ String stationBankListHtml(bool mobilePage)
     if ((mobilePage == 0) && ((i == 0) || (i == 25) || (i == 50) || (i == 75)))
     { 
       html3 += "<table>" + String("\n");
-      //html += "<tr><th>No</th><th>Station</th></tr>" + String("\n");
     } 
  
     // 0-98   >98
@@ -4744,11 +5005,9 @@ String stationBankListHtml(bool mobilePage)
 
     html3 += "<tr>";
     html3 += "<td><p class='stationNumberList'>" + String(i + 1) + "</p></td>";
-    html3 += "<td><p class='stationList' onClick=\"stationLoad('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
-    //html += "<td><p class='stationList' onClick=\"stationLoad('" + String(i + 1) +  "'); highlightStation(" + String(i + 1) + "); \">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
+    html3 += "<td><p class='stationList' onClick=\"changeStation('" + String(i + 1) +  "');\">" + String(station).substring(0, stationNameLenghtCut) + "</p></td>";
     html3 += "</tr>" + String("\n");
-    
-
+   
     if ((mobilePage == 0) && ((i == 24) || (i == 49) || (i == 74))) //||(i == 98))
     { 
       html3 += "</table>" + String("\n");
@@ -4767,8 +5026,7 @@ String stationBankListHtml(bool mobilePage)
 
   return html3;
 }
-
-
+*/
 
 void voiceTime()
 {
@@ -4788,7 +5046,7 @@ void voiceTime()
   int h = time_s.substring(0,2).toInt();
   Serial.print("wartosc h:");
   Serial.print(h);
-  snprintf(chbuf, sizeof (chbuf), "Jest godzina %i:%02i", h, time_s.substring(3,5).toInt());
+  snprintf(chbuf, sizeof (chbuf), "Jest godzina %i:%02i:00", h, time_s.substring(3,5).toInt());
   Serial.println(chbuf);
   audio.connecttospeech(chbuf, "pl");
 }
@@ -4935,44 +5193,6 @@ void assignRemoteCodes()
   }
 }
 
-
-
-void readRcStoredCodes(uint8_t x) // Odczyt kdów pilota - funkcja eksperymentalna, testowa
-{
-  displayStartTime = millis();  // Uaktulniamy czas dla funkcji auto-pwrotu z menu
-  displayActive = true;         // Wyswietlacz aktywny
-  equalizerMenuEnable = false;   // Ustawiamy flage menu equalizera
-  timeDisplay = false;          // Wyłaczamy zegar
-    
-  u8g2.clearBuffer();
-  u8g2.setFont(spleen6x12PL);
-
-  /* Strona  1 z 3 */
-  if (x == 0) {
-  u8g2.setCursor(0,13); u8g2.print("Vol +:" + String(rcCmdVolumeUp, HEX) +   " Down:" + String(rcCmdArrowDown, HEX) + " Bank-:" + String(rcCmdBankMinus, HEX) + " Equ:" + String(rcCmdAud, HEX));
-  u8g2.setCursor(0,26); u8g2.print("Vol -:" + String(rcCmdVolumeDown, HEX) + " Back:" + String(rcCmdBack, HEX) +      " Bank+:" + String(rcCmdBankPlus, HEX));
-  u8g2.setCursor(0,39); u8g2.print("Left: " + String(rcCmdArrowRight, HEX) + " Ok:  " + String(rcCmdOk, HEX) +        " Red:  " + String(rcCmdRed, HEX));
-  u8g2.setCursor(0,52); u8g2.print("Right:" + String(rcCmdArrowLeft, HEX) +  " Src: " + String(rcCmdSrc, HEX) +       " Green:" + String(rcCmdGreen, HEX));
-  u8g2.setCursor(0,63); u8g2.print("Up:   " + String(rcCmdArrowUp, HEX) +    " Mute:" + String(rcCmdMute, HEX) +      " Dim:  " + String(rcCmdDirect, HEX));
-  }
- 
-  /* Strona  2 z 3 */
-  if (x == 1) {
-  u8g2.setCursor(0,13); u8g2.print("Key 0:" + String(rcCmdKey0, HEX) + "  Key 6:" + String(rcCmdKey0, HEX));
-  u8g2.setCursor(0,26); u8g2.print("Key 1:" + String(rcCmdKey1, HEX) + "  Key 7:" + String(rcCmdKey0, HEX));
-  u8g2.setCursor(0,39); u8g2.print("Key 2:" + String(rcCmdKey2, HEX) + "  Key 8:" + String(rcCmdKey0, HEX));
-  u8g2.setCursor(0,52); u8g2.print("Key 3:" + String(rcCmdKey3, HEX) + "  Key 9:" + String(rcCmdKey0, HEX));
-  u8g2.setCursor(0,63); u8g2.print("Key 4:" + String(rcCmdKey0, HEX) + "  Key 0:" + String(rcCmdKey0, HEX));
-  }
-
-  /* Strona  3 z 3 */
-  if (x == 2) {
-  u8g2.setCursor(0,60); u8g2.print("Key 5:" + String(rcCmdKey0, HEX) + "  Key 0:" + String(rcCmdKey0, HEX));
-  }
-
-  u8g2.sendBuffer(); 
-}
-
 void listFiles(String path, String &html) 
 {
     File root = SD.open(path);
@@ -5024,8 +5244,6 @@ void listFiles(String path, String &html)
 }
 
 
-
-
 //####################################################################################### SETUP ####################################################################################### //
 
 void setup() 
@@ -5065,8 +5283,8 @@ void setup()
   // Inicjalizacja przycisków enkoderów jako wejścia
   pinMode(SW_PIN2, INPUT_PULLUP);
   
-  pinMode(recv_pin, INPUT_PULLUP);
-
+  //pinMode(recv_pin, INPUT_PULLUP);
+  pinMode(recv_pin, INPUT);
   attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
 
   analogReadResolution(12); // Set ADC resolution to 12 bits (0-4095 range)
@@ -5095,7 +5313,8 @@ void setup()
   u8g2.setFont(u8g2_font_fub14_tf);
   u8g2.drawStr(58, 17, "Internet Radio");
   u8g2.setFont(spleen6x12PL);
-  u8g2.drawStr(226, 62, softwareRev);
+  //u8g2.drawStr(226, 62, softwareRev);
+  u8g2.drawStr(208, 62, softwareRev);
   u8g2.sendBuffer();
 
   // Inicjalizacja karty SD
@@ -5175,10 +5394,10 @@ void setup()
     //u8g2.drawStr(5, 32, "WiFi Connected");
     currentIP = WiFi.localIP().toString();  //konwersja IP na string
     u8g2.setFont(spleen6x12PL);
-    u8g2.drawStr(5, 62, "                                  ");  // czyszczenie lini spacjami
+    u8g2.drawStr(5, 62, "                               ");  // czyszczenie lini spacjami
     u8g2.sendBuffer();
-    u8g2.drawStr(5, 62, "WiFi Connected IP:");  //wyswietlenie IP
-    u8g2.drawStr(115, 62, currentIP.c_str());   //wyswietlenie IP
+    u8g2.drawStr(5, 62, "Connected, IP:");  //wyswietlenie IP
+    u8g2.drawStr(90, 62, currentIP.c_str());   //wyswietlenie IP
     u8g2.sendBuffer();
     delay(1000);  // odczekaj 1 sek przed wymazaniem numeru IP
     
@@ -5187,7 +5406,8 @@ void setup()
     //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2 );
     configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer1, ntpServer2);
     
-    timer1.attach(1, updateTimerFlag);  // Ustaw timer, aby wywoływał funkcję updateTimer co sekundę
+    //timer1.attach(0.5, updateTimerFlag);  // Ustaw timer, aby wywoływał funkcję updateTimer
+    timer1.attach(1, updateTimerFlag);  // Ustaw timer, aby wywoływał funkcję updateTimer
     timer2.attach(1, displayDimmerTimer);
     //timer3.attach(10, switchWeatherData);   // Ustaw timer, aby wywoływał funkcję switchWeatherData co 10 sekund
   
@@ -5208,58 +5428,120 @@ void setup()
       //html.reserve(48000);  // rezerwuje bufor (np. 24KB)
 
       if (userAgent.indexOf("Mobile") != -1 || userAgent.indexOf("Android") != -1 || userAgent.indexOf("iPhone") != -1) 
-      //if (userAgent.indexOf("Mobile") != -1) // Jestesmy na telefonie 
       {
         html = stationBankListHtmlMobile();
-        //html = stationBankListHtml(1); // 1-> mobile, 0 - desktop
       } 
       else //Jestemy na komputerze 
       {
         html = stationBankListHtmlPC();
-        //html = stationBankListHtml(0);
       }
       
       String finalhtml = String(index_html) + html;  // Składamy cześć stałą html z częscią generowaną dynamicznie
-      //request->send_P(200, "text/html", finalhtml.c_str(), processor);
       request->send_P(200, "text/html", finalhtml.c_str());
     });
 
     server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
-        //request->send(SD, "/favicon.png", "image/x-icon");
         request->send(SD, "/favicon.ico", "image/x-icon");       
     });
     
     server.on("/icon.png", HTTP_GET, [](AsyncWebServerRequest *request){
-        //request->send(SD, "/favicon.png", "image/x-icon");
         request->send(SD, "/icon.png", "image/x-icon");       
     });
 
-    server.on("/menu", HTTP_GET, [](AsyncWebServerRequest *request){
-      
+    server.on("/menu", HTTP_GET, [](AsyncWebServerRequest *request){   
       String html = String(menu_html);
-
       request->send(200, "text/html", html);
     });
+    
+    server.on("/firmwareota", HTTP_POST, [](AsyncWebServerRequest *request) {
+      request->send(200, "text/plain", "Update done");
+      },
+     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) 
+    {
 
+      static size_t total = 0;
+      static size_t contentLength = 0;
+      static unsigned long lastPrint = 0;
 
-    server.on("/fwupdate", HTTP_GET, [](AsyncWebServerRequest *request){
+      if (index == 0) 
+      {
+        // Tylko przy pierwszym pakiecie
+        Serial.printf("OTA Start: %s\n", filename.c_str());
+        total = 0;
+        contentLength = request->contentLength();  // pełna długość pliku
+        lastPrint = millis();
 
-      String html = "";
-      html += "<html><body>";
-      html += "<h2>ESP Radio - OTA Update</h2>";
-      html += "<form id='uploadForm' method='POST' action='/firmware' enctype='multipart/form-data'>";
-	    html += "<input type='file' id='fileInput' name='update' />"; 
-	    html += "<input type='submit' value='Upload' /><p id='fileSizeMessage'></p></form>";
-      html += "<script>document.getElementById('fileInput').addEventListener('change', function() {const file = this.files[0];";
-      html += "const messageElement = document.getElementById('fileSizeMessage');";
-      html += "messageElement.textContent = \"File size: \" + (file.size / 1024).toFixed(2) + \" KB\"; messageElement.style.color = \"green\";});";
-      html += "document.getElementById('uploadForm').addEventListener('submit', function(e) {const file = document.getElementById('fileInput').files[0];});";
-      html += "</script></body></html>";
+        size_t sketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
 
-      request->send(200, "text/html", html);
-      //request->send(200, "text/html", "<form method='POST' action='/fwupdate' enctype='multipart/form-data'><input type='file' name='firmware'><input type='submit' value='Update'></form>");
-      
+        if (contentLength > sketchSpace) 
+        {
+          Serial.printf("Error: firmware too big (%u > %u bytes)\n", contentLength, sketchSpace);
+          return;
+        }
+
+        if (!Update.begin(sketchSpace)) 
+        {
+          Update.printError(Serial);
+          return;
+        }
+      }
+
+      if (Update.write(data, len) != len) 
+      {
+        Update.printError(Serial);
+      } 
+      else 
+      {
+        total += len;
+        
+        // Wyświetlaj pasek postępu co 300 ms
+        unsigned long now = millis();
+        if (now - lastPrint >= 200 || final) 
+        {     
+          int percent = (total * 100) / contentLength;
+          Serial.printf("Progress: %d%% (%u/%u bytes)\n", percent, total, contentLength);
+          u8g2.setCursor(5, 24); u8g2.print("File: " + String(filename));
+          u8g2.setCursor(5, 36); u8g2.print("Flashing... " + String(total / 1024) + " KB");
+          u8g2.sendBuffer();
+          lastPrint = now;
+        }
+      }
+
+      if (final) 
+      {
+        if (Update.end(true)) 
+        {
+          request->send(200, "text/plain", "Update done - reset in 3sec");
+          Serial.println("Update complete");
+          u8g2.setCursor(5, 48); u8g2.print("Completed - reset in 3sec");
+          u8g2.sendBuffer();
+              
+          AsyncWebServerRequest *reqCopy = request;
+          reqCopy->onDisconnect([]() 
+          {
+            delay(3000);
+            ESP.restart();
+          });
+        } 
+        else 
+        {
+          Update.printError(Serial);
+          request->send(500, "text/plain", "Update failed");
+        }
+      }
+    });
+
+    server.on("/editor", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+      request->send(SD, "/editor.html", "text/html"); //"application/octet-stream");
+    });
+
+    server.on("/ota", HTTP_GET, [](AsyncWebServerRequest *request)
+    {
+      ws.closeAll();
       audio.stopSong();
+          
+      unsigned long now = millis();
       timeDisplay = false;
       displayActive = true;
       //clearFlags();
@@ -5268,475 +5550,383 @@ void setup()
       u8g2.setFont(spleen6x12PL);     
       u8g2.setCursor(5, 12); u8g2.print("ESP-Radio, OTA Firwmare Update");
       u8g2.sendBuffer();
+
+      String html = "";
+      html += "<!DOCTYPE html>";
+      html += "<html lang='en'>";
+      html += "<head>";
+      html += "<meta charset='UTF-8' />";
+      html += "<meta name='viewport' content='width=device-width, initial-scale=1.0'/>";
+      html += "<title>ESP OTA Update</title>";
+      html += "<style>";
+      html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; color: #333; padding: 40px; text-align: center; }";
+      html += "h2 { margin-bottom: 30px; color: #111; }";
+      html += "#uploadSection { background-color: white; padding: 30px; border-radius: 8px; display: inline-block; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }";
+      html += "input[type='file'] { padding: 10px; }";
+      html += "button { margin-top: 20px; padding: 10px 20px; background-color: #4CAF50; border: none; color: white; font-size: 16px; border-radius: 5px; cursor: pointer; }";
+      html += "button:disabled { background-color: #ccc; cursor: not-allowed; }";
+      html += "progress { width: 100%; height: 20px; margin-top: 20px; border-radius: 5px; appearance: none; -webkit-appearance: none; }";
+      html += "progress::-webkit-progress-bar { background-color: #eee; border-radius: 5px; }";
+      html += "progress::-webkit-progress-value { background-color: #4CAF50; border-radius: 5px; }";
+      html += "progress::-moz-progress-bar { background-color: #4CAF50; border-radius: 5px; }";
+      html += "#status { margin-top: 15px; font-weight: bold; }";
+      html += "#fileInfo { color: #555; margin-top: 10px; }";
+      html += "</style>";
+      html += "</head>";
+      html += "<body>";
+      html += "<div id='uploadSection'>";
+      html += "<h2>ESP32 Radio - OTA Firmware Update</h2>";
+      html += "<input type='file' id='fileInput' name='update' /><br />";
+      html += "<div id='fileInfo'>No file selected</div>";
+      html += "<button id='uploadBtn'>Upload</button>";
+      html += "<p id='status'></p>";
+      html += "</div>";
+      html += "<script>";
+      html += "const fileInput = document.getElementById('fileInput');";
+      html += "const uploadBtn = document.getElementById('uploadBtn');";
+      html += "const status = document.getElementById('status');";
+      html += "const fileInfo = document.getElementById('fileInfo');";
+      html += "fileInput.addEventListener('change', function () {";
+      html += "  const file = this.files[0];";
+      html += "  if (file) {";
+      html += "    fileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;";
+      html += "  } else {";
+      html += "    fileInfo.textContent = 'No file selected';";
+      html += "  }";
+      html += "});";
+      html += "uploadBtn.addEventListener('click', function () {";
+      html += "  const file = fileInput.files[0];";
+      html += "  if (!file) { alert('Please select a file first.'); return; }";
+      html += "  uploadBtn.disabled = true;";
+      html += "  status.textContent = 'Uploading...';";
+      html += "  const xhr = new XMLHttpRequest();";
+      html += "  const formData = new FormData();";
+      html += "  formData.append('update', file);";
+      html += "  xhr.open('POST', '/firmwareota', true);";
+      html += "  xhr.onload = function () {";
+      html += "    if (xhr.status === 200) {";
+      html += "      status.textContent = '✅ Upload completed, reboot in 3 sec.';";
+      html += "      setTimeout(() => { window.location.href = '/'; }, 10000);";
+      html += "    } else {";
+      html += "      status.textContent = '❌ Upload failed.';";
+      html += "    }";
+      html += "    uploadBtn.disabled = false;";
+      html += "  };";
+      html += "  xhr.onerror = function () {";
+      html += "    status.textContent = '❌ Network error.';";
+      html += "    uploadBtn.disabled = false;";
+      html += "  };";
+      html += "  xhr.send(formData);";
+      html += "});";
+      html += "</script>";
+      html += "</body>";
+      html += "</html>";
+
+      request->send(200, "text/html", html);
+      //request->send(SD, "/ota.html", "text/html"); //"application/octet-stream");
     });
 
-    server.on("/firmware", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "Update done");
-    }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        
-        u8g2.setCursor(5, 24); u8g2.print("File: " + String(filename));
-        u8g2.setCursor(5, 36); u8g2.print("Flashing... " + String(index / 1024) + " KB");
-        
-        u8g2.sendBuffer();
-        
-        //delay(100);
-        Serial.print("Firmware Update progress:");
-        Serial.print(index);
-        Serial.println(" kB\r");
-
-        //Serial.printf("Progress: %u kB\r", index);
-
-        if (!index) {
-            //Serial.printf("Update: %s\n", filename.c_str());
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-                Update.printError(Serial);
-            }
-        }
-        if (Update.write(data, len) != len) {
-            Update.printError(Serial);
-        }
-        if (final) {
-            if (Update.end(true)) 
-            {
-              displayStartTime = millis();
-              timeDisplay = false;
-              displayActive = true;
-              Serial.println("Update complete");
-              u8g2.setCursor(5, 48); u8g2.print("Completed - reset in 3sec");
-              u8g2.sendBuffer();
-              delay(3000);
-              ESP.restart();
-            } 
-            else 
-            {
-              Update.printError(Serial);
-            }
-        }
+    server.on("/page1", HTTP_GET, [](AsyncWebServerRequest *request)
+    { // Strona do celow testowych ladowana z karty SD
+      request->send(SD, "/page1.html", "text/html"); //"application/octet-stream");
     });
 
-   
-    server.on("/displayMode", HTTP_GET, [](AsyncWebServerRequest *request)
+    server.on("/edit", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
-      ir_code = rcCmdSrc; // Udajemy kod pilota SRC - zmiana trybu wyswietlacza 
-      bit_count = 32;
-      calcNec();          // Przeliczamy kod pilota na pełny oryginalny kod NEC
-      
-      //request->redirect("/");
-      request->send(200, "text/plain", "DisplayMode Changed"); // Wysyłanie aktualnej wartości
-      //request->send_P(200, "text/html", html.c_str(), processor);
+      if (!request->hasParam("filename")) 
+      {
+          request->send(400, "text/plain", "Brak parametru filename");
+          return;
+      }
+
+      String filename = request->getParam("filename")->value();
+      if (!filename.startsWith("/")) { filename = "/" + filename;}
+      File file = SD.open(filename, FILE_READ);
+      if (!file) {
+          request->send(404, "text/plain", "Nie można otworzyć pliku");
+          return;
+      }
+
+      String html = "<html><head><title>Edit File</title></head><body>";
+      html += "<h2>Editing: " + filename + "</h2>";
+      html += "<form method='POST' action='/save'>";
+      html += "<input type='hidden' name='filename' value='" + filename + "'>";
+      html += "<textarea name='content' rows='100' cols='130'>";
+
+      while (file.available()) 
+      {
+          html += (char)file.read();
+      }
+
+      file.close();
+
+      html += "</textarea><br>";
+      html += "<input type='submit' value='Save'>";
+      html += "</form>";
+      html += "<p><a href='/list'>Back to list</a></p>";
+      html += "</body></html>";
+
+      request->send(200, "text/html", html);
     });
 
-    server.on("/playTime", HTTP_GET, [](AsyncWebServerRequest *request)
+    server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) 
     {
-      //<button class="button" onclick="location.href='/playTime'">Play Voice Time</button>
-      voiceTime();
-      request->redirect("/");
-    });
-
-    server.on("/editor", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      request->send(SD, "/editor.html", "text/html"); //"application/octet-stream");
-    });
-/*
-    server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) 
-    {
-        String html = "<html><body><h1>SD card content:</h1><ul>";
-        html += "<form action=\"/upload\" method=\"POST\" enctype=\"multipart/form-data\">";
-        html += "<input type=\"file\" name=\"file\"><br>";
-        html += "<input type=\"submit\" value=\"Upload\">";
-        html += "</form>";
-
-        listFiles("/", html);
-        html += "</ul></body></html>";      
-        request->send(200, "text/html", html);
-    });
-
-*/
-
-    server.on("/edit", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (!request->hasParam("filename")) {
-        request->send(400, "text/plain", "Brak parametru filename");
-        return;
-    }
-
-    String filename = request->getParam("filename")->value();
-    if (!filename.startsWith("/")) { filename = "/" + filename;}
-    File file = SD.open(filename, FILE_READ);
-    if (!file) {
-        request->send(404, "text/plain", "Nie można otworzyć pliku");
-        return;
-    }
-
-    String html = "<html><head><title>Edit File</title></head><body>";
-    html += "<h2>Editing: " + filename + "</h2>";
-    html += "<form method='POST' action='/save'>";
-    html += "<input type='hidden' name='filename' value='" + filename + "'>";
-    html += "<textarea name='content' rows='100' cols='130'>";
-
-    while (file.available()) {
-        html += (char)file.read();
-    }
-
-    file.close();
-
-    html += "</textarea><br>";
-    html += "<input type='submit' value='Save'>";
-    html += "</form>";
-    html += "<p><a href='/list'>Back to list</a></p>";
-    html += "</body></html>";
-
-    request->send(200, "text/html", html);
-    });
-
-
-
-
-    server.on("/edit2", HTTP_GET, [](AsyncWebServerRequest *request){
-    if (!request->hasParam("filename")) {
-        request->send(400, "text/plain", "Missing filename");
-        return;
-    }
-
-    String filename = request->getParam("filename")->value();
-    File file = SD.open("/" + filename, "r");
-    if (!file || file.isDirectory()) {
-        request->send(404, "text/plain", "File not found");
-        return;
-    }
-    String html;
-    html.reserve(24000);  // rezerwuje bufor (np. 24KB)
-    html += "<style>input{width: 250px;} .row{margin-bottom:1px;}</style>";
-    html += "<form action=\"/save\" method=\"POST\">";
-    html += "<input type=\"hidden\" name=\"filename\" value=\"" + filename + "\">";
-    html += "<div style=\"text-align:left; display: inline-block;\">";
-
-    int lineNum = 0;
-    while (file.available()) {
-        String line = file.readStringUntil('\n');
-        line.trim();
-
-      // Rozdziel po tabulacji lub min. 2 spacjach
-      std::vector<String> parts;
-      int start = 0;
-      for (int i = 0; i < line.length(); i++) {
-          if ((line[i] == '\t') || (i < line.length() - 1 && line[i] == ' ' && line[i+1] == ' ')) {
-              String token = line.substring(start, i);
-              token.trim();
-              if (token.length()) parts.push_back(token);
-              if (line[i] == ' ' && line[i+1] == ' ') i++;  // pomiń podwójną spację
-              start = i + 1;
-          }
-    }
-    if (start < line.length()) {
-        String token = line.substring(start);
-        token.trim();
-        if (token.length()) parts.push_back(token);
-    }
-
-    String nazwa = parts.size() > 0 ? parts[0] : "";
-    String bank = "", stacja = "", url = "";
-
-    if (parts.size() > 1) {
-        int b = parts[1].indexOf("Bank");
-        int s = parts[1].indexOf("Stacja");
-        if (b >= 0 && s > b) {
-            bank = parts[1].substring(b + 5, parts[1].indexOf(" ", b + 5));
-            stacja = parts[1].substring(s + 7);
-        }
-    }
-    url = parts.size() > 2 ? parts[2] : "";
-
-    html += "<div class=\"row\">";
-    
-    html += "Nazwa: <input type=\"text\" name=\"line" + String(lineNum) + "_0\" value=\"" + nazwa + "\"> ";
-    
-    html += "Bank: <input type=\"number\" name=\"line" + String(lineNum) + "_1\" value=\"" + bank + "\" style=\"width:40px;\"> ";
-    
-    html += "Stacja: <input type=\"number\" name=\"line" + String(lineNum) + "_2\" value=\"" + stacja + "\" style=\"width:40px;\"> ";
-    
-    html += "URL: <input type=\"text\" name=\"line" + String(lineNum) + "_3\" value=\"" + url + "\" style=\"width:650px;\">";
-    
-    html += "</div>";
-    lineNum++;
-    }
-
-    html += "<input type=\"hidden\" name=\"lines\" value=\"" + String(lineNum) + "\">";
-    html += "<br><input type=\"submit\" value=\"Save changes\">";
-    html += "</form>";
-    html += "<br><a href=\"/list\">Go Back</a>";
-
-    file.close();
-    request->send(200, "text/html", html);
-    });
-
-
-
-
-
-
-
-
-    server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if (!request->hasParam("filename", true) || !request->hasParam("content", true)) {
+      if (!request->hasParam("filename", true) || !request->hasParam("content", true)) 
+      {
         request->send(400, "text/plain", "Brakuje danych");
         return;
-    }
+      }
 
-    String filename = request->getParam("filename", true)->value();
-    String content = request->getParam("content", true)->value();
+      String filename = request->getParam("filename", true)->value();
+      String content = request->getParam("content", true)->value();
 
-    File file = SD.open(filename, FILE_WRITE);
-    if (!file) {
+      File file = SD.open(filename, FILE_WRITE);
+      if (!file) 
+      {
         request->send(500, "text/plain", "Nie można zapisać pliku");
         return;
-    }
+      }
 
-    file.print(content);
-    file.close();
+      file.print(content);
+      file.close();
 
-    request->send(200, "text/html", "<p>File Saved!</p><p><a href='/list'>Back to list</a></p>");
+      request->send(200, "text/html", "<p>File Saved!</p><p><a href='/list'>Back to list</a></p>");
     });
-
 
     server.on("/list", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
+      String html = String(list_html) + String("\n");
+      
+      html += "<body><h1>ESP32 Radio - SD card:</h1>" + String("\n");
         
-    String html = String(list_html) + String("\n");
-    
-    html += "<body><h1>ESP32 Radio - SD card:</h1>" + String("\n");
-       
-    html += "<form action=\"/upload\" method=\"POST\" enctype=\"multipart/form-data\">";
-    html += "<input type=\"file\" name=\"file\">";
-    html += "<input type=\"submit\" value=\"Upload\">";
-    html += "</form>";
-    html += "<div class=\"columnlist\">" + String("\n");
-    html += "<table><tr><th>File</th><th>Size (Bytes)</th><th>Action</th></tr>";
+      html += "<form action=\"/upload\" method=\"POST\" enctype=\"multipart/form-data\">";
+      html += "<input type=\"file\" name=\"file\">";
+      html += "<input type=\"submit\" value=\"Upload\">";
+      html += "</form>";
+      html += "<div class=\"columnlist\">" + String("\n");
+      html += "<table><tr><th>File</th><th>Size (Bytes)</th><th>Action</th></tr>";
 
-    listFiles("/", html);
-    html += "</table></div>";
-    html += "<p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>" + String("\n"); 
-    html += "</body></html>";     
-    request->send(200, "text/html", html);
-    });
+      listFiles("/", html);
+      html += "</table></div>";
+      html += "<p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>" + String("\n"); 
+      html += "</body></html>";     
+      request->send(200, "text/html", html);
+      });
 
-    server.on("/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
-    String filename = "/"; // Dodajemy sciezke do głownego folderu
-      if (request->hasParam("filename", true)) {
-        filename += request->getParam("filename", true)->value();
-        if (SD.remove(filename.c_str())) {
-            Serial.println("Plik usunięty: " + filename);
-        } else {
-            Serial.println("Nie można usunąć pliku: " + filename);
+      server.on("/delete", HTTP_POST, [](AsyncWebServerRequest *request) {
+      String filename = "/"; // Dodajemy sciezke do głownego folderu
+        if (request->hasParam("filename", true)) {
+          filename += request->getParam("filename", true)->value();
+          if (SD.remove(filename.c_str())) {
+              Serial.println("Plik usunięty: " + filename);
+          } else {
+              Serial.println("Nie można usunąć pliku: " + filename);
+          }
         }
-      }
-      request->redirect("/list"); // Przekierowujemy na stronę listy
+        request->redirect("/list"); // Przekierowujemy na stronę listy
+      });
+
+      server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+      String html = String(config_html);
+      html.replace("%D1", String(displayBrightness).c_str());
+      html.replace("%D2", String(dimmerDisplayBrightness).c_str());
+      html.replace("%D3", String(displayAutoDimmerTime).c_str());
+      html.replace("%D4", String(vuMeterMode).c_str());
+      html.replace("%D5", String(encoderFunctionOrder).c_str());
+      html.replace("%D6", String(displayMode).c_str());
+      html.replace("%D7", String(vuMeterRefreshTime).c_str());
+      html.replace("%D8", String(scrollingRefresh).c_str());
+      html.replace("%D9", String(displayPowerSaveTime).c_str());
+      
+      html.replace("%S10", displayPowerSaveEnabled ? "" : " selected");
+      html.replace("%S11", maxVolumeExt ? " selected" : "");
+      html.replace("%S12", maxVolumeExt ? "" : " selected");
+      html.replace("%S1", displayAutoDimmerOn ? " selected" : "");
+      html.replace("%S2", displayAutoDimmerOn ? "" : " selected");
+      html.replace("%S3", timeVoiceInfoEveryHour ? " selected" : "");
+      html.replace("%S4", timeVoiceInfoEveryHour ? "" : " selected");
+      html.replace("%S5", vuMeterOn ? " selected" : "");
+      html.replace("%S6", vuMeterOn ? "" : " selected");
+      html.replace("%S7", adcKeyboardEnabled ? " selected" : "");
+      html.replace("%S8", adcKeyboardEnabled ? "" : " selected");
+      html.replace("%S9", displayPowerSaveEnabled ? " selected" : "");
+    
+
+      request->send(200, "text/html", html);
     });
 
-    server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String html = String(config_html);
-    html.replace("%D1", String(displayBrightness).c_str());
-    html.replace("%D2", String(dimmerDisplayBrightness).c_str());
-    html.replace("%D3", String(displayAutoDimmerTime).c_str());
-    html.replace("%D4", String(vuMeterMode).c_str());
-    html.replace("%D5", String(encoderFunctionOrder).c_str());
-    html.replace("%D6", String(displayMode).c_str());
-    html.replace("%D7", String(vuMeterRefreshTime).c_str());
-    html.replace("%D8", String(scrollingRefresh).c_str());
-    html.replace("%D9", String(displayPowerSaveTime).c_str());
-    
-    html.replace("%S10", displayPowerSaveEnabled ? "" : " selected");
-    html.replace("%S11", maxVolumeExt ? " selected" : "");
-    html.replace("%S12", maxVolumeExt ? "" : " selected");
-    html.replace("%S1", displayAutoDimmerOn ? " selected" : "");
-    html.replace("%S2", displayAutoDimmerOn ? "" : " selected");
-    html.replace("%S3", timeVoiceInfoEveryHour ? " selected" : "");
-    html.replace("%S4", timeVoiceInfoEveryHour ? "" : " selected");
-    html.replace("%S5", vuMeterOn ? " selected" : "");
-    html.replace("%S6", vuMeterOn ? "" : " selected");
-    html.replace("%S7", adcKeyboardEnabled ? " selected" : "");
-    html.replace("%S8", adcKeyboardEnabled ? "" : " selected");
-    html.replace("%S9", displayPowerSaveEnabled ? " selected" : "");
-   
-
-    request->send(200, "text/html", html);
-    });
-
-    server.on("/adc", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String html = String(adc_html);
-    html.replace("%D10", String(keyboardButtonThreshold_Shift).c_str());
-     html.replace("%D11", String(keyboardButtonThreshold_Memory).c_str()); 
-    html.replace("%D12", String(keyboardButtonThreshold_Band).c_str()); 
-    html.replace("%D13", String(keyboardButtonThreshold_Auto).c_str()); 
-    html.replace("%D14", String(keyboardButtonThreshold_Scan).c_str()); 
-    html.replace("%D15", String(keyboardButtonThreshold_Mute).c_str()); 
-    html.replace("%D16", String(keyboardButtonThresholdTolerance).c_str()); 
-    html.replace("%D17", String(keyboardButtonNeutral).c_str());
-    html.replace("%D18", String(keyboardSampleDelay).c_str()); 
-    html.replace("%D0", String(keyboardButtonThreshold_0).c_str()); 
-    html.replace("%D1", String(keyboardButtonThreshold_1).c_str()); 
-    html.replace("%D2", String(keyboardButtonThreshold_2).c_str()); 
-    html.replace("%D3", String(keyboardButtonThreshold_3).c_str()); 
-    html.replace("%D4", String(keyboardButtonThreshold_4).c_str()); 
-    html.replace("%D5", String(keyboardButtonThreshold_5).c_str()); 
-    html.replace("%D6", String(keyboardButtonThreshold_6).c_str()); 
-    html.replace("%D7", String(keyboardButtonThreshold_7).c_str()); 
-    html.replace("%D8", String(keyboardButtonThreshold_8).c_str()); 
-    html.replace("%D9", String(keyboardButtonThreshold_9).c_str()); 
-    //html.replace("%D10", String(keyboardButtonThreshold_Shift).c_str());
-    //Serial.print("keyboardButtonThreshold_Shift: "); Serial.println(String(keyboardButtonThreshold_Shift)); 
-   
-
-    request->send(200, "text/html", html);
-    });
-
-    server.on("/configadc", HTTP_POST, [](AsyncWebServerRequest *request) {
-    
-    if (request->hasParam("keyboardButtonThreshold_Shift", true)) {
-      keyboardButtonThreshold_Shift = request->getParam("keyboardButtonThreshold_Shift", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThreshold_Memory", true)) {
-      keyboardButtonThreshold_Memory = request->getParam("keyboardButtonThreshold_Memory", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThreshold_Band", true)) {
-      keyboardButtonThreshold_Band = request->getParam("keyboardButtonThreshold_Band", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThreshold_Auto", true)) {
-      keyboardButtonThreshold_Auto = request->getParam("keyboardButtonThreshold_Auto", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThreshold_Scan", true)) {
-      keyboardButtonThreshold_Scan = request->getParam("keyboardButtonThreshold_Scan", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThreshold_Mute", true)) {
-      keyboardButtonThreshold_Mute = request->getParam("keyboardButtonThreshold_Mute", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonThresholdTolerance", true)) {
-      keyboardButtonThresholdTolerance = request->getParam("keyboardButtonThresholdTolerance", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardButtonNeutral", true)) {
-      keyboardButtonNeutral = request->getParam("keyboardButtonNeutral", true)->value().toInt();
-    }
-    if (request->hasParam("keyboardSampleDelay", true)) {
-      keyboardSampleDelay = request->getParam("keyboardSampleDelay", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_0", true)) {
-      keyboardButtonThreshold_0 = request->getParam("keyboardButtonThreshold_0", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_1", true)) {
-      keyboardButtonThreshold_1 = request->getParam("keyboardButtonThreshold_1", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_2", true)) {
-      keyboardButtonThreshold_2 = request->getParam("keyboardButtonThreshold_2", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_3", true)) {
-      keyboardButtonThreshold_3 = request->getParam("keyboardButtonThreshold_3", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_4", true)) {
-      keyboardButtonThreshold_4 = request->getParam("keyboardButtonThreshold_4", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_5", true)) {
-      keyboardButtonThreshold_5 = request->getParam("keyboardButtonThreshold_5", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_6", true)) {
-      keyboardButtonThreshold_6 = request->getParam("keyboardButtonThreshold_6", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_7", true)) {
-      keyboardButtonThreshold_7 = request->getParam("keyboardButtonThreshold_7", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_8", true)) {
-      keyboardButtonThreshold_8 = request->getParam("keyboardButtonThreshold_8", true)->value().toInt();
-    } 
-    if (request->hasParam("keyboardButtonThreshold_9", true)) {
-      keyboardButtonThreshold_9 = request->getParam("keyboardButtonThreshold_9", true)->value().toInt();
-    }
-
-    request->send(200, "text/html", "<h1>ADC Keyboard Thresholds Updated!</h1><a href='/menu'>Go Back</a>");
-    
-    saveAdcConfig(); 
-    
-    //ODswiezenie ekranu OLED po zmianach konfiguracji
-    ir_code = rcCmdBack; // Udajemy kod pilota Back
-    bit_count = 32;
-    calcNec();          // Przeliczamy kod pilota na pełny oryginalny kod NEC
-
-    });
-
-
-    server.on("/configupdate", HTTP_POST, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("displayBrightness", true)) {
-      displayBrightness = request->getParam("displayBrightness", true)->value().toInt();
-    }
-    if (request->hasParam("dimmerDisplayBrightness", true)) {
-      dimmerDisplayBrightness = request->getParam("dimmerDisplayBrightness", true)->value().toInt();
-    }
-    if (request->hasParam("displayAutoDimmerTime", true)) {
-      displayAutoDimmerTime = request->getParam("displayAutoDimmerTime", true)->value().toInt();
-    }
-    if (request->hasParam("displayAutoDimmerOn", true)) {
-      displayAutoDimmerOn = request->getParam("displayAutoDimmerOn", true)->value() == "1";
-    }
-    if (request->hasParam("timeVoiceInfoEveryHour", true)) {
-      timeVoiceInfoEveryHour = request->getParam("timeVoiceInfoEveryHour", true)->value() == "1";
-    }
-    if (request->hasParam("vuMeterMode", true)) {
-      vuMeterMode = request->getParam("vuMeterMode", true)->value().toInt();
-    }
-    if (request->hasParam("encoderFunctionOrder", true)) {
-      encoderFunctionOrder = request->getParam("encoderFunctionOrder", true)->value().toInt();
-    }
-    if (request->hasParam("displayMode", true)) {
-      displayMode = request->getParam("displayMode", true)->value().toInt();
-    }
-    if (request->hasParam("vuMeterOn", true)) {
-      vuMeterOn = request->getParam("vuMeterOn", true)->value() == "1";
-    }
-    if (request->hasParam("vuMeterRefreshTime", true)) {
-      vuMeterRefreshTime = request->getParam("vuMeterRefreshTime", true)->value().toInt();
-    }
-    if (request->hasParam("scrollingRefresh", true)) {
-      scrollingRefresh = request->getParam("scrollingRefresh", true)->value().toInt();
-    }
-    if (request->hasParam("adcKeyboardEnabled", true)) {
-      adcKeyboardEnabled = request->getParam("adcKeyboardEnabled", true)->value() == "1";
-    }
-    if (request->hasParam("displayPowerSaveEnabled", true)) {
-      displayPowerSaveEnabled = request->getParam("displayPowerSaveEnabled", true)->value() == "1";
-    }
-    if (request->hasParam("displayPowerSaveTime", true)) {
-      displayPowerSaveTime = request->getParam("displayPowerSaveTime", true)->value().toInt();
-    }
-    if (request->hasParam("maxVolumeExt", true)) {
-      maxVolumeExt = request->getParam("maxVolumeExt", true)->value() == "1";
-    }  
-
-    request->send(200, "text/html", "<h1>Configuration Updated!</h1><a href='/menu'>Go Back</a>");
-    saveConfig(); 
-    readConfig();
-    //ODswiezenie ekranu OLED po zmianach konfiguracji
-    ir_code = rcCmdBack; // Udajemy komendy pilota
-    bit_count = 32;
-    calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC
-
-  });
-
-
-    server.on("/toggleAdcDebug", HTTP_POST, [](AsyncWebServerRequest *request) {
-    // Przełączanie wartości
-    u8g2.clearBuffer();
-    displayActive = true;
-    displayStartTime = millis();
-    debugKeyboard = !debugKeyboard;
-    //adcKeyboardEnabled = !adcKeyboardEnabled;
-    Serial.print("Pomiar wartości ADC ON/OFF:");
-    Serial.println(debugKeyboard);
-    request->send(200, "text/plain", debugKeyboard ? "1" : "0"); // Wysyłanie aktualnej wartości
-    //debugKeyboard = !debugKeyboard;
-    
-    if (debugKeyboard == 0)
+    server.on("/adc", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
-      ir_code = rcCmdBack; // Przypisujemy kod polecenia z pilota
-      bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
-      calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC  
-    }
+      String html = String(adc_html);
+      html.replace("%D10", String(keyboardButtonThreshold_Shift).c_str());
+      html.replace("%D11", String(keyboardButtonThreshold_Memory).c_str()); 
+      html.replace("%D12", String(keyboardButtonThreshold_Band).c_str()); 
+      html.replace("%D13", String(keyboardButtonThreshold_Auto).c_str()); 
+      html.replace("%D14", String(keyboardButtonThreshold_Scan).c_str()); 
+      html.replace("%D15", String(keyboardButtonThreshold_Mute).c_str()); 
+      html.replace("%D16", String(keyboardButtonThresholdTolerance).c_str()); 
+      html.replace("%D17", String(keyboardButtonNeutral).c_str());
+      html.replace("%D18", String(keyboardSampleDelay).c_str()); 
+      html.replace("%D0", String(keyboardButtonThreshold_0).c_str()); 
+      html.replace("%D1", String(keyboardButtonThreshold_1).c_str()); 
+      html.replace("%D2", String(keyboardButtonThreshold_2).c_str()); 
+      html.replace("%D3", String(keyboardButtonThreshold_3).c_str()); 
+      html.replace("%D4", String(keyboardButtonThreshold_4).c_str()); 
+      html.replace("%D5", String(keyboardButtonThreshold_5).c_str()); 
+      html.replace("%D6", String(keyboardButtonThreshold_6).c_str()); 
+      html.replace("%D7", String(keyboardButtonThreshold_7).c_str()); 
+      html.replace("%D8", String(keyboardButtonThreshold_8).c_str()); 
+      html.replace("%D9", String(keyboardButtonThreshold_9).c_str()); 
+      
+      request->send(200, "text/html", html);
+    });
+
+    server.on("/configadc", HTTP_POST, [](AsyncWebServerRequest *request) 
+    {
+      if (request->hasParam("keyboardButtonThreshold_Shift", true)) {
+        keyboardButtonThreshold_Shift = request->getParam("keyboardButtonThreshold_Shift", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThreshold_Memory", true)) {
+        keyboardButtonThreshold_Memory = request->getParam("keyboardButtonThreshold_Memory", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThreshold_Band", true)) {
+        keyboardButtonThreshold_Band = request->getParam("keyboardButtonThreshold_Band", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThreshold_Auto", true)) {
+        keyboardButtonThreshold_Auto = request->getParam("keyboardButtonThreshold_Auto", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThreshold_Scan", true)) {
+        keyboardButtonThreshold_Scan = request->getParam("keyboardButtonThreshold_Scan", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThreshold_Mute", true)) {
+        keyboardButtonThreshold_Mute = request->getParam("keyboardButtonThreshold_Mute", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonThresholdTolerance", true)) {
+        keyboardButtonThresholdTolerance = request->getParam("keyboardButtonThresholdTolerance", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardButtonNeutral", true)) {
+        keyboardButtonNeutral = request->getParam("keyboardButtonNeutral", true)->value().toInt();
+      }
+      if (request->hasParam("keyboardSampleDelay", true)) {
+        keyboardSampleDelay = request->getParam("keyboardSampleDelay", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_0", true)) {
+        keyboardButtonThreshold_0 = request->getParam("keyboardButtonThreshold_0", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_1", true)) {
+        keyboardButtonThreshold_1 = request->getParam("keyboardButtonThreshold_1", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_2", true)) {
+        keyboardButtonThreshold_2 = request->getParam("keyboardButtonThreshold_2", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_3", true)) {
+        keyboardButtonThreshold_3 = request->getParam("keyboardButtonThreshold_3", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_4", true)) {
+        keyboardButtonThreshold_4 = request->getParam("keyboardButtonThreshold_4", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_5", true)) {
+        keyboardButtonThreshold_5 = request->getParam("keyboardButtonThreshold_5", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_6", true)) {
+        keyboardButtonThreshold_6 = request->getParam("keyboardButtonThreshold_6", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_7", true)) {
+        keyboardButtonThreshold_7 = request->getParam("keyboardButtonThreshold_7", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_8", true)) {
+        keyboardButtonThreshold_8 = request->getParam("keyboardButtonThreshold_8", true)->value().toInt();
+      } 
+      if (request->hasParam("keyboardButtonThreshold_9", true)) {
+        keyboardButtonThreshold_9 = request->getParam("keyboardButtonThreshold_9", true)->value().toInt();
+      }
+
+      request->send(200, "text/html", "<h1>ADC Keyboard Thresholds Updated!</h1><a href='/menu'>Go Back</a>");
+      
+      saveAdcConfig(); 
+      
+      //ODswiezenie ekranu OLED po zmianach konfiguracji
+      ir_code = rcCmdBack; // Udajemy kod pilota Back
+      bit_count = 32;
+      calcNec();          // Przeliczamy kod pilota na pełny oryginalny kod NEC
+    });
+
+    server.on("/configupdate", HTTP_POST, [](AsyncWebServerRequest *request) 
+    {
+      if (request->hasParam("displayBrightness", true)) {
+        displayBrightness = request->getParam("displayBrightness", true)->value().toInt();
+      }
+      if (request->hasParam("dimmerDisplayBrightness", true)) {
+        dimmerDisplayBrightness = request->getParam("dimmerDisplayBrightness", true)->value().toInt();
+      }
+      if (request->hasParam("displayAutoDimmerTime", true)) {
+        displayAutoDimmerTime = request->getParam("displayAutoDimmerTime", true)->value().toInt();
+      }
+      if (request->hasParam("displayAutoDimmerOn", true)) {
+        displayAutoDimmerOn = request->getParam("displayAutoDimmerOn", true)->value() == "1";
+      }
+      if (request->hasParam("timeVoiceInfoEveryHour", true)) {
+        timeVoiceInfoEveryHour = request->getParam("timeVoiceInfoEveryHour", true)->value() == "1";
+      }
+      if (request->hasParam("vuMeterMode", true)) {
+        vuMeterMode = request->getParam("vuMeterMode", true)->value().toInt();
+      }
+      if (request->hasParam("encoderFunctionOrder", true)) {
+        encoderFunctionOrder = request->getParam("encoderFunctionOrder", true)->value().toInt();
+      }
+      if (request->hasParam("displayMode", true)) {
+        displayMode = request->getParam("displayMode", true)->value().toInt();
+      }
+      if (request->hasParam("vuMeterOn", true)) {
+        vuMeterOn = request->getParam("vuMeterOn", true)->value() == "1";
+      }
+      if (request->hasParam("vuMeterRefreshTime", true)) {
+        vuMeterRefreshTime = request->getParam("vuMeterRefreshTime", true)->value().toInt();
+      }
+      if (request->hasParam("scrollingRefresh", true)) {
+        scrollingRefresh = request->getParam("scrollingRefresh", true)->value().toInt();
+      }
+      if (request->hasParam("adcKeyboardEnabled", true)) {
+        adcKeyboardEnabled = request->getParam("adcKeyboardEnabled", true)->value() == "1";
+      }
+      if (request->hasParam("displayPowerSaveEnabled", true)) {
+        displayPowerSaveEnabled = request->getParam("displayPowerSaveEnabled", true)->value() == "1";
+      }
+      if (request->hasParam("displayPowerSaveTime", true)) {
+        displayPowerSaveTime = request->getParam("displayPowerSaveTime", true)->value().toInt();
+      }
+      if (request->hasParam("maxVolumeExt", true)) {
+        maxVolumeExt = request->getParam("maxVolumeExt", true)->value() == "1";
+      }  
+
+      request->send(200, "text/html", "<h1>Configuration Updated!</h1><a href='/menu'>Go Back</a>");
+      saveConfig(); 
+      readConfig();
+      //ODswiezenie ekranu OLED po zmianach konfiguracji
+      ir_code = rcCmdBack; // Udajemy komendy pilota
+      bit_count = 32;
+      calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC
+    });
+
+    server.on("/toggleAdcDebug", HTTP_POST, [](AsyncWebServerRequest *request) 
+    {
+      // Przełączanie wartości
+      u8g2.clearBuffer();
+      displayActive = true;
+      displayStartTime = millis();
+      debugKeyboard = !debugKeyboard;
+      //adcKeyboardEnabled = !adcKeyboardEnabled;
+      Serial.print("Pomiar wartości ADC ON/OFF:");
+      Serial.println(debugKeyboard);
+      request->send(200, "text/plain", debugKeyboard ? "1" : "0"); // Wysyłanie aktualnej wartości
+      //debugKeyboard = !debugKeyboard;
+      
+      if (debugKeyboard == 0)
+      {
+        ir_code = rcCmdBack; // Przypisujemy kod polecenia z pilota
+        bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
+        calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC  
+      }
         
     });
 
@@ -5769,37 +5959,8 @@ void setup()
         request->send(400, "text/plain", "No file name");
       }
     });
-    // Format viewweb na potrzeby zewnetrznego Edytora Bankow HTML
-    server.on("/viewweb", HTTP_GET, [](AsyncWebServerRequest *request)  
-    {
-      String filename = "/";
-      if (request->hasParam("filename")) 
-      {
-        filename += request->getParam("filename")->value();
-        //String fullPath = "/" + filename;
+    // Format viewweb ver2 na potrzeby zewnetrznego Edytora Bankow HTML
 
-        File file = SD.open(filename);
-        if (file) 
-        {
-            String content; //= "<html><body>";
-            while (file.available()) {
-                content += (char)file.read();
-            }
-            //content +="</body></html>";
-            request->send(200, "text/html", content);
-            file.close();
-          } 
-          else 
-          {
-            request->send(404, "text/plain", "File not found");
-          }
-        } 
-        else 
-        {
-        request->send(400, "text/plain", "No file name");
-      }
-    });
-    
     server.on("/viewweb2", HTTP_GET, [](AsyncWebServerRequest *request)  
     {
       String filename = "/";
@@ -5830,10 +5991,9 @@ void setup()
         request->send(400, "text/plain", "No file name");
       }
     });
-  
-
+ 
     server.on("/download", HTTP_ANY, [](AsyncWebServerRequest *request) {
-    if (request->hasParam("filename")) {
+      if (request->hasParam("filename")) {
         String filename = request->getParam("filename")->value();
         String fullPath = "/" + filename;
         //String fullPath = filename;
@@ -5843,182 +6003,87 @@ void setup()
         File file = SD.open(fullPath);
         //Serial.println("SD: " + SD + "/" + filename);
 
-        if (file) {
-            if (file.size() > 0) {
-                //request->send(file,filename, "application/octet-stream", true); //"application/octet-stream");
-                
-                //request->send(file, "application/octet-stream" , true); //"application/octet-stream");
-                //request->send(200, "application/octet-stream", file.readString());
-                
-                request->send(SD, fullPath, "application/octet-stream", true); //"application/octet-stream");"text/plain"
-                
-                
-                //request->send(SD, "/remote.txt", "application/octet-stream", true); 
-                file.close();
-                Serial.println("Plik wysłany: " + filename);
-            } else {
-                request->send(404, "text/plain", "Plik jest pusty");
+        if (file) 
+        {
+            if (file.size() > 0) 
+            {         
+              request->send(SD, fullPath, "application/octet-stream", true); //"application/octet-stream");"text/plain"
+              file.close();
+              Serial.println("Plik wysłany: " + filename);
+            } 
+            else 
+            {
+              request->send(404, "text/plain", "Plik jest pusty");
             }
-        } else {
-            Serial.println("Nie znaleziono pliku: " + fullPath);
-            request->send(404, "text/plain", "Plik nie znaleziony");
+        } 
+        else 
+        {
+          Serial.println("Nie znaleziono pliku: " + fullPath);
+          request->send(404, "text/plain", "Plik nie znaleziony");
         }
-    } else {
-        Serial.println("Brak parametru filename");
-        request->send(400, "text/plain", "Brak nazwy pliku");
-    }
-    });
- 
-
-    server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "File Uploaded!");
-    },
-    //nullptr,
-    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-    if (!filename.startsWith("/")) {
-      filename = "/" + filename;
-    }
-
-    Serial.print("Upload File Name: ");
-    Serial.println(filename);
-
-    // Otwórz plik na karcie SD
-    static File file; // Użyj statycznej zmiennej do otwierania pliku tylko raz
-    if (index == 0) {
-        file = SD.open(filename, FILE_WRITE);
-        if (!file) {
-            Serial.println("Failed to open file for writing");
-            request->send(500, "text/plain", "Failed to open file for writing");
-            return;
-        }
-    }
-
-    // Zapisz dane do pliku
-    size_t written = file.write(data, len);
-    if (written != len) {
-        Serial.println("Error writing data to file");
-        file.close();
-        request->send(500, "text/plain", "Error writing data to file");
-        return;
-    }
-
-    // Jeśli to ostatni fragment, zamknij plik i wyślij odpowiedź do klienta
-    if (final) {
-        file.close();
-        Serial.println("File upload completed successfully.");
-        request->send(200, "text/plain", "File upload successful");
-    } else {
-        Serial.println("Received chunk of size: " + String(len));
-    }
-});
-
-
-
-    server.on("/volumeUp", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      volumeUp(); 
-      request->send_P(200, "text/html", index_html);
-    });
-
-    server.on("/volumeDown", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      volumeDown(); 
-      request->send_P(200, "text/html", index_html);
-    });
-
-    server.on("/stationUp", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      station_nr++;
-      if (station_nr > stationsCount) {station_nr = 1;}
-      changeStation();
-      request->send_P(200, "text/html", index_html);
-    });
-
-    server.on("/stationDown", HTTP_GET, [](AsyncWebServerRequest *request)
-    {
-      station_nr--;
-      if (station_nr < 1) {station_nr = stationsCount;}
-      changeStation();
-      request->send_P(200, "text/html", index_html);
-    });
-
-
-    // Send a GET request to <ESP_IP>/slider?value=<inputMessage>
-    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) 
-    {
-      String inputMessage1;
-      String inputMessage2;
-      String inputMessage3;
-      String inputMessage4;
-      String inputMessage5;
-      // GET input1 value on <ESP_IP>/slider?value=<inputMessage>
-      if (request->hasParam(PARAM_INPUT_1)) // Parametr zmiana głośności
-      {
-        inputMessage1 = request->getParam(PARAM_INPUT_1)->value();
-        sliderValue = inputMessage1;
-        volumeValue = sliderValue.toInt();
-        
-        if (volumeValue < 1) 
-        { volumeMute = true;}
-        else if (volumeValue > 0) 
-        {volumeMute = false;}
-        audio.setVolume(volumeValue);
-        volumeDisplay();
-      }
-      else if (request->hasParam(PARAM_INPUT_2)) // Parametr zmiana stacji
-      {
-        inputMessage2 = request->getParam(PARAM_INPUT_2)->value();
-        station_nr = inputMessage2.toInt();
-        Serial.print("inputMessage2: ");
-        Serial.println(inputMessage2);
-               
-        ir_code = rcCmdOk; // Przypisujemy kod polecenia z pilota
-        bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
-        calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC    
-                       
-          //changeStation();
-          //displayRadio();
-          //u8g2.sendBuffer();
-          //clearFlags();   
-      }
-      else if (request->hasParam(PARAM_INPUT_3)) //Parametr zmiana Banku
-      {
-        inputMessage3 = request->getParam(PARAM_INPUT_3)->value();
-        bank_nr = inputMessage3.toInt();
-        bankMenuEnable = true;        
-        displayStartTime = millis();
-        timeDisplay = false;
-        displayActive = true;
-        //bankMenuDisplay();
-        fetchStationsFromServer();
-        //changeStation();
-        clearFlags();
-
-        ir_code = rcCmdOk; // Przypisujemy kod polecenia z pilota
-        bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
-        calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC    
-        station_nr = 1;
-
-      }
-      else if (request->hasParam(PARAM_INPUT_4)) // Parametr URL
-      {
-        inputMessage4 = request->getParam(PARAM_INPUT_4)->value();
-        url2play = inputMessage4.c_str();
-        urlToPlay = true;
-      }
+      } 
       else 
       {
-        inputMessage1 = "No message sent";
-        inputMessage2 = "No message sent";
-        inputMessage3 = "No message sent";
-        inputMessage4 = "No message sent";
+        Serial.println("Brak parametru filename");
+        request->send(400, "text/plain", "Brak nazwy pliku");
       }
-       Serial.println(inputMessage1);
-       Serial.println(inputMessage2);
-       Serial.println(inputMessage3);
-       Serial.println(inputMessage4);
-      
-      request->send(200, "text/plain", "OK");
+    });
+ 
+    server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "File Uploaded!");
+      },
+      //nullptr,
+      [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+      if (!filename.startsWith("/")) {
+        filename = "/" + filename;
+      }
+
+      Serial.print("Upload File Name: ");
+      Serial.println(filename);
+
+      // Otwórz plik na karcie SD
+      static File file; // Użyj statycznej zmiennej do otwierania pliku tylko raz
+      if (index == 0) {
+          file = SD.open(filename, FILE_WRITE);
+          if (!file) {
+              Serial.println("Failed to open file for writing");
+              request->send(500, "text/plain", "Failed to open file for writing");
+              return;
+          }
+      }
+
+      // Zapisz dane do pliku
+      size_t written = file.write(data, len);
+      if (written != len) {
+          Serial.println("Error writing data to file");
+          file.close();
+          request->send(500, "text/plain", "Error writing data to file");
+          return;
+      }
+
+      // Jeśli to ostatni fragment, zamknij plik i wyślij odpowiedź do klienta
+      if (final) {
+          file.close();
+          Serial.println("File upload completed successfully.");
+          request->send(200, "text/plain", "File upload successful");
+      } else {
+          Serial.println("Received chunk of size: " + String(len));
+      }
+    });
+
+    server.on("/update", HTTP_GET, [] (AsyncWebServerRequest *request) {
+      if (request->hasParam("url")) 
+      {
+        String inputMessage = request->getParam("url")->value();
+        url2play = inputMessage.c_str();
+        urlToPlay = true;
+        Serial.println("Odebrany URL: " + inputMessage);
+        request->send(200, "text/plain", "URL received");
+      } 
+      else 
+      {
+        request->send(400, "text/plain", "Missing URL parameter");
+      }  
     });
 
     ws.onEvent(onWsEvent);
@@ -6028,14 +6093,10 @@ void setup()
     firstVisibleLine = currentSelection + 1; // pierwsza widoczna lina to grająca stacja przy starcie
     if (currentSelection + 1 >= stationsCount - 1) 
     {
-     firstVisibleLine = currentSelection - 3;
-    }
-
-    
+      firstVisibleLine = currentSelection - 3;
+    }  
     displayRadio();
     updateTimer();
-    //readRemoteConfig();
-    //assignRemoteCodes();
   } 
   else 
   {
@@ -6049,88 +6110,49 @@ void setup()
     while(true)
     { wifiManager.process(); } // Nieskonczona petla z procesowaniem Wifi aby nie przejsc do ekranu radia gdy nie ma Wifi
   }
-  
-  //int kbd = xTaskCreatePinnedToCore(handleKeyboard, "handle_Keyboard", 2000, NULL, 1, NULL, 1);
-  //if(kbd) {Serial.println("Task kbd created...");} 
-  //else {Serial.printf("Couldn't create task %i", kbd);}
-
-  /*
-  int aud = xTaskCreatePinnedToCore(
-    audioProcessing, // Funkcja zadania
-    "handleAudio",  // Nazwa zadania (opcjonalna)
-    16384,            // Rozmiar stosu (w bajtach)
-    NULL,            // Parametry przekazywane do zadania (opcjonalne)
-    2,               // Priorytet zadania (0 to najniższy, im wyższa liczba, tym wyższy priorytet)
-    NULL,            // Uchwyt do zadania (opcjonalny)
-    1);              // Rdzeń, na którym zadanie ma być uruchomione (0 lub 1)
-
-  if(aud) {Serial.println("Task aud created...");}
-  else {Serial.printf("Couldn't create task %i", aud);}
-  */  
 
 
 }
-//#######################################################################################  LOOP  ####################################################################################### //
+// #######################################################################################  LOOP  ####################################################################################### //
 void loop() 
 {
   runTime1 = esp_timer_get_time();
-  wifiManager.process();  // WiFi manager
   audio.loop();           // Wykonuje główną pętlę dla obiektu audio (np. odtwarzanie dźwięku, obsługa audio)
   button2.loop();         // Wykonuje pętlę dla obiektu button2 (sprawdza stan przycisku z enkodera 2)
   handleButtons();        // Wywołuje funkcję obsługującą przyciski i wykonuje odpowiednie akcje (np. zmiana opcji, wejście do menu)
   vTaskDelay(1);          // Krótkie opóźnienie, oddaje czas procesora innym zadaniom
 
-  /* -------------- KLAWIATURA --------------*/
-  /* Odczyt stanu klawiatura ADC pod GPIO 9 */
-  
+
+  /*---------------------  FUNKCJA KLAWIATURA / Odczyt stanu klawiatura ADC pod GPIO 9 ---------------------*/
   if ((millis() - keyboardLastSampleTime >= keyboardSampleDelay) && (adcKeyboardEnabled)) // Sprawdzenie ADC - klawiatury 
   {
     keyboardLastSampleTime = millis();
     handleKeyboard();
   }
   
+  /*---------------------  FUNKCJA DIMMER ---------------------*/
   if ((displayActive == true) && (displayDimmerActive == true) && (fwupd == false)) {displayDimmer(0);}  
 
   // Obsługa enkodera 2
   if (encoderFunctionOrder == 0) { handleEncoder2VolumeStationsClick(); } 
   else if (encoderFunctionOrder == 1) { handleEncoder2StationsVolumeClick(); }
-
-  
   
  /*---------------------  FUNKCJA BACK / POWROTU ze wszystkich opcji Menu, Ustawien, itd ---------------------*/
-
   if ((fwupd == false) && (displayActive) && (millis() - displayStartTime >= displayTimeout))  // Przywracanie poprzedniej zawartości ekranu po 6 sekundach
   {
-    /*
-    Serial.print("rcInputDigitsMenuEnable: ");
-    Serial.println(rcInputDigitsMenuEnable);
-
-    Serial.print("Station nr: ");
-    Serial.println(station_nr);
-    
-    Serial.print("Bank nr: ");
-    Serial.println(bank_nr);
-    */
-
-    if (volumeBufferValue != volumeValue)
-    {
-      saveVolumeOnSD();
-      volumeBufferValue = volumeValue;
-    }
+    //volumeBufferValue = volumeValue;
+    if (volumeBufferValue != volumeValue) { saveVolumeOnSD(); }    
     
     // Jezeli nastapiła zmiana numeru stacji to wczytujemy nową stacje
-    if ((rcInputDigitsMenuEnable == true) && (station_nr != stationFromBuffer))   
-    {
-     changeStation(); 
-    }
+    if ((rcInputDigitsMenuEnable == true) && (station_nr != stationFromBuffer)) { changeStation(); }
+    
     displayDimmer(0); 
     clearFlags();
     displayRadio();
     u8g2.sendBuffer();
   }
 
- /*---------------------  PILOT IR - NEC  ---------------------*/ 
-
+ /*---------------------  FUNKCJA PILOT IR  / Obsluga pilota IR w kodzie NEC ---------------------*/ 
   if (bit_count == 32) // sprawdzamy czy odczytalismy w przerwaniu pełne 32 bity kodu IR NEC
   {
     if (ir_code != 0) // sprawdzamy czy zmienna ir_code nie jest równa 0
@@ -6239,14 +6261,21 @@ void loop()
         if (toneSelect < 1){toneSelect = 1;}
         displayEqualizer();
       }
-      else if ((ir_code == rcCmdArrowUp) && (volumeSet == false) && (equalizerMenuEnable == false))// Przycisk w góre
+      else if ((ir_code == rcCmdArrowUp) && (equalizerMenuEnable == false))// Przycisk w góre
       {  
+        if ((volumeSet == true) && (volumeBufferValue != volumeValue))
+        {
+          saveVolumeOnSD();
+          volumeSet = false;
+        }
         timeDisplay = false;
         displayActive = true;
         displayStartTime = millis();
         
         station_nr = currentSelection + 1;
-        station_nr--;
+        
+        if (listedStations == true) {station_nr--;}
+        //station_nr--;
         if (station_nr < 1) { station_nr = stationsCount; } // jesli dojdziemy do początku listy stacji to przewijamy na koniec
         
         scrollUp(); 
@@ -6258,15 +6287,21 @@ void loop()
         if (toneSelect > 3){toneSelect = 3;}
         displayEqualizer();
       }
-      else if ((ir_code == rcCmdArrowDown) && (volumeSet == false) && (equalizerMenuEnable == false)) // Przycisk w dół
+      else if ((ir_code == rcCmdArrowDown) && (equalizerMenuEnable == false)) // Przycisk w dół
       {  
+        if ((volumeSet == true) && (volumeBufferValue != volumeValue))
+        {
+          saveVolumeOnSD();
+          volumeSet = false;
+        }
         timeDisplay = false;
         displayActive = true;
         displayStartTime = millis();
         
         station_nr = currentSelection + 1;
         
-        station_nr++;
+        //station_nr++;
+        if (listedStations == true) {station_nr++;}
         if (station_nr > stationsCount) 
 	      {
           station_nr = 1;//stationsCount;
@@ -6346,22 +6381,6 @@ void loop()
           
           displayDimmer(!displayDimmerActive); // Dimmer OLED
           Serial.println("Właczono display Dimmer rcCmdDirect");
-          /*
-          if (displayDimmerActive == 1) 
-          {       
-            displayDimmer(0);
-            Serial.println("Właczono display Dimmer 0");
-          }
-          else if (displayDimmerActive == 0) 
-          {       
-            displayDimmer(1);
-            Serial.println("Właczono display Dimmer 1");
-          }
-          */
-
-          //displayBrightness =  displayBrightness + 15;
-          //if (displayBrightness > 15){displayBrightness = 0;}
-          //u8g2.sendF("ca", 0xC7, displayBrightness);
         }
       }      
       else if (ir_code == rcCmdSrc) 
@@ -6435,31 +6454,18 @@ void loop()
     // Serial.print(uxTaskGetStackHighWaterMark(NULL));
     // Serial.println(" DWORD");
   }
-
-  if ((audioInfoRefresh == true) && (displayActive == false)) // Zmiana streamtitle lub info bitrate, czestotliwość - wymaga odswiezenia displayRadio
-  { 
-    audioInfoRefresh = false;
-    displayRadio(); // Streamtitle, bitrate, wymaga odswiezenia
-  }
   
-  if (wsAudioRefresh == true)
-  {
-    wsAudioRefresh = false;
-    wsStreamInfoRefresh();
-  }
 
-
-  /*---------------------  Odswiezanie VU Meter, Time, Scroller, OLED, WiFi ver. 1 ---------------------*/ 
- ///*
+  /*---------------------  FUNKCJA PETLI MILLIS SCROLLER / Odswiezanie VU Meter, Time, Scroller, OLED, WiFi ver. 1 ---------------------*/ 
   if ((millis() - scrollingStationStringTime > scrollingRefresh) && (displayActive == false)) 
   {
     scrollingStationStringTime = millis();
-    if (ActionNeedUpdateTime == true) // Aktualizacja zegara co 1 sek. + status audio buffora
+    if (ActionNeedUpdateTime == true) // Aktualizacja zegara, zegar głosowy, debug Audio, sygnał wifi 
     {
       ActionNeedUpdateTime = false;
       updateTimer();
    
-      if (voiceTimePlay == true)
+      if (voiceTimePlay == true) // Zegar głosowy
       {
         voiceTimePlay = false;
         voiceTime();
@@ -6475,10 +6481,26 @@ void loop()
         if ((displayMode == 0) || (displayMode == 2)) {drawSignalPower(194,63,0);} // x, y, 0-bez wydruku mocy sygnału na terminalu , 1-z wydrukiem
         if ((displayMode == 1) && (volumeMute == false)) {drawSignalPower(244,47,0);}
       }
+      
+      if ((audioInfoRefresh == true) && (displayActive == false)) // Zmiana streamtitle - wymaga odswiezenia na wyswietlaczu
+      { 
+        audioInfoRefresh = false;
+        stationStringFormatting(); // Formatujemy StationString do wyswietlenia przez Scroller
+      } 
+
+        if ((audioInfoRefresh2 == true) && (displayActive == false)) // Zmiana bitrate - wymaga odswiezenia na wyswietlaczu
+      { 
+        audioInfoRefresh2 = false;
+        displayRadio();
+      } 
+
+      if (wsAudioRefresh == true)
+      {
+        wsAudioRefresh = false;
+        wsStreamInfoRefresh();
+      }
     }
-    
-    displayRadioScroller();  // wykonujemy przewijanie tekstu station stringi przygotowujemy bufor ekranu
-    
+            
     if (volumeMute == true)   // Obsługa wyciszenia dzwięku, wprowadzamy napis MUTE na ekran
     {   
       u8g2.setDrawColor(0);
@@ -6487,20 +6509,21 @@ void loop()
       u8g2.setDrawColor(1);
     } 
     
-    //Rysujmey wskaznik VU esli flaga rysowania aktywna, mute = 0 i tylko trybie displayMode 0
-    if (vuMeterOn == true && displayActive == false && displayMode == 0 && volumeMute == false){vuMeter();}
+    //Rysujmey wskaznik VU jesli flaga rysowania aktywna, mute = 0 i tylko trybie displayMode 0
+    if (vuMeterOn == true && displayActive == false && displayMode == 0 && volumeMute == false) {vuMeter();}
     
-    if (urlToPlay == true) // Jesli web serwer ustawił flagę "odtwarzaj URL" to uruchamiamy funkcje grania z adresu URL wysłanego przez strone WWW
+    if (urlToPlay == true) // Jesli web serwer ustawił flagę "odtwarzaj URL" to uruchamiamy funkcje odtwarzania z adresu URL wysłanego przez strone WWW
     {
       urlToPlay = false;
       webUrlStationPlay();
       displayRadio();
     }
-
+    
+    displayRadioScroller();  // wykonujemy przewijanie tekstu station stringi przygotowujemy bufor ekranu
     u8g2.sendBuffer();  // rysujemy całą zawartosc ekranu.
    
   }
-  //*/
+ 
   //runTime2 = esp_timer_get_time();
   //runTime = runTime2 - runTime1;  
 }
