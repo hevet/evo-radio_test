@@ -23,7 +23,7 @@
 #include <ESPmDNS.h>           // Blibioteka mDNS dla ESP
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.18.04"  // Wersja oprogramowania radia
+#define softwareRev "v3.18.05"  // Wersja oprogramowania radia
 #define hostname "esp32radio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 
@@ -284,43 +284,43 @@ Ticker timer2;             // Timer do getWeatherData co 60s
 WiFiClient client;         // Obiekt do obsługi połączenia WiFi dla klienta HTTP
 
 const char stylehead_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML><html>
-<head>
-  <link rel='icon' href='/favicon.ico' type='image/x-icon'>
-  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+  <!DOCTYPE HTML><html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
 
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Web Radio</title>
-  <style>
-    html {font-family: Arial; display: inline-block; text-align: center;}
-    h2 {font-size: 1.3rem;}
-    p {font-size: 0.95rem;}
-    table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
-    td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
-    td:hover {font-weight:bold;}
-    a {color: black; text-decoration: none;}
-    body {max-width: 1380px; margin:0px auto; padding-bottom: 25px; background: #D0D0D0;}
-    .slider {-webkit-appearance: none; margin: 14px; width: 330px; height: 10px; background: #4CAF50; outline: none; -webkit-transition: .2s; transition: opacity .2s; border-radius: 5px;}
-    .slider::-webkit-slider-thumb {-webkit-appearance: none; appearance: none; width: 35px; height: 25px; background: #4a4a4a; cursor: pointer; border-radius: 5px;}
-    .slider::-moz-range-thumb { width: 35px; height: 35px; background: #4a4a4a; cursor: pointer; border-radius: 5px;} 
-    .button { background-color: #4CAF50; border: 1; color: white; padding: 10px 20px; border-radius: 5px;}
-    .buttonBank { background-color: #4CAF50; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
-    .buttonBankSelected { background-color: #505050; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
-    .buttonBank:active {background-color: #4a4a4a box-shadow: 0 4px #666; transform: translateY(2px);}
-    .buttonBank:hover {background-color: #4a4a4a;}
-    .button:hover {background-color: #4a4a4a;}
-    .button:active {background-color: #4a4a4a; box-shadow: 0 4px #666; transform: translateY(2px);}
-    .column { align: center; padding: 5px; display: flex; justify-content: space-between;}
-    .columnlist { align: center; padding: 10px; display: flex; justify-content: center;}
-    .stationList {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer;}
-	  .stationNumberList {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px;}
-	  .stationListSelected {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer; background-color: #4CAF50;}
-	  .stationNumberListSelected {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px; background-color: #4CAF50;}
-    .station-name   
-  </style>
-</head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h2 {font-size: 1.3rem;}
+      p {font-size: 0.95rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
+      td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
+      td:hover {font-weight:bold;}
+      a {color: black; text-decoration: none;}
+      body {max-width: 1380px; margin:0px auto; padding-bottom: 25px; background: #D0D0D0;}
+      .slider {-webkit-appearance: none; margin: 14px; width: 330px; height: 10px; background: #4CAF50; outline: none; -webkit-transition: .2s; transition: opacity .2s; border-radius: 5px;}
+      .slider::-webkit-slider-thumb {-webkit-appearance: none; appearance: none; width: 35px; height: 25px; background: #4a4a4a; cursor: pointer; border-radius: 5px;}
+      .slider::-moz-range-thumb { width: 35px; height: 35px; background: #4a4a4a; cursor: pointer; border-radius: 5px;} 
+      .button { background-color: #4CAF50; border: 1; color: white; padding: 10px 20px; border-radius: 5px;}
+      .buttonBank { background-color: #4CAF50; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
+      .buttonBankSelected { background-color: #505050; border: 1; color: white; padding: 8px 8px; border-radius: 5px; width: 35px; height: 35px; margin: 0 1.5px;}
+      .buttonBank:active {background-color: #4a4a4a box-shadow: 0 4px #666; transform: translateY(2px);}
+      .buttonBank:hover {background-color: #4a4a4a;}
+      .button:hover {background-color: #4a4a4a;}
+      .button:active {background-color: #4a4a4a; box-shadow: 0 4px #666; transform: translateY(2px);}
+      .column { align: center; padding: 5px; display: flex; justify-content: space-between;}
+      .columnlist { align: center; padding: 10px; display: flex; justify-content: center;}
+      .stationList {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer;}
+      .stationNumberList {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px;}
+      .stationListSelected {text-align:left; margin-top: 0px; width: 280px; margin-bottom:0px;cursor: pointer; background-color: #4CAF50;}
+      .stationNumberListSelected {text-align:center; margin-top: 0px; width: 35px; margin-bottom:0px; background-color: #4CAF50;}
+      .station-name   
+    </style>
+  </head>
 )rawliteral";
 
 
@@ -643,156 +643,156 @@ const char index_html[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 const char list_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML><html>
-<head>
-  <link rel='icon' href='/favicon.ico' type='image/x-icon'>
-  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+  <!DOCTYPE HTML><html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
 
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Web Radio</title>
-  <style>
-    html {font-family: Arial; display: inline-block; text-align: center;}
-    h2 {font-size: 2.3rem;}
-    p {font-size: 1.1rem;}
-    table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
-    td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
-    td:hover {font-weight:bold;}
-    a {color: black; text-decoration: none;}
-    body {max-width: 1380px; margin:0px auto; padding-bottom: 25px;}
-    .columnlist { align: center; padding: 10px; display: flex; justify-content: center;}
-  </style>
-</head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h2 {font-size: 2.3rem;}
+      p {font-size: 1.1rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 0px 0px;}
+      td, th {font-size: 0.8rem; border: 1px solid gray; border-collapse: collapse;}
+      td:hover {font-weight:bold;}
+      a {color: black; text-decoration: none;}
+      body {max-width: 1380px; margin:0px auto; padding-bottom: 25px;}
+      .columnlist { align: center; padding: 10px; display: flex; justify-content: center;}
+    </style>
+  </head>
 )rawliteral";
 
 const char config_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML>
-<html>
-<head>
-  <link rel='icon' href='/favicon.ico' type='image/x-icon'>
-  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+  <!DOCTYPE HTML>
+  <html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
 
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Web Radio</title>
-  <style>
-    html {font-family: Arial; display: inline-block; text-align: center;}
-    h1 {font-size: 2.3rem;}
-    table {border: 1px solid black; border-collapse: collapse; margin: 20px auto; width: 80%;}
-    th, td {font-size: 1rem; border: 1px solid gray; padding: 8px; text-align: left;}
-    td:hover {font-weight: bold;}
-    a {color: black; text-decoration: none;}
-    body {max-width: 1380px; margin:0 auto; padding-bottom: 25px;}
-    .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 60%;}
-  </style>
-  </head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h1 {font-size: 2.3rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 20px auto; width: 80%;}
+      th, td {font-size: 1rem; border: 1px solid gray; padding: 8px; text-align: left;}
+      td:hover {font-weight: bold;}
+      a {color: black; text-decoration: none;}
+      body {max-width: 1380px; margin:0 auto; padding-bottom: 25px;}
+      .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 60%;}
+    </style>
+    </head>
 
-<body>
-<h2>ESP32 Radio - Settings</h2>
-<form action="/configupdate" method="POST">
-<table class="tableSettings">
-<tr><th>Setting</th><th>Value</th></tr>
-<tr><td>Normal Display Brightness (0-255)</td><td><input type="number" name="displayBrightness" min="1" max="255" value="%D1"></td></tr>
-<tr><td>Dimmed Display Brightness (0-255)</td><td><input type="number" name="dimmerDisplayBrightness" min="1" max="255" value="%D2"></td></tr>
-<tr><td>Auto Dimmer Delay Time (1-255 sec.)</td><td><input type="number" name="displayAutoDimmerTime" min="1" max="255" value="%D3"></td></tr>
-<tr><td>Auto Dimmer</td><td><select name="displayAutoDimmerOn"><option value="1"%S1>On</option><option value="0"%S2>Off</option></select></td></tr>
-<tr><td>Time Voice Info Every Hour</td><td><select name="timeVoiceInfoEveryHour"><option value="1"%S3>On</option><option value="0"%S4>Off</option></select></td></tr>
-<tr><td>VU Meter Mode (0-1),    0-dashed lines, 1-continuous lines</td><td><input type="number" name="vuMeterMode" min="0" max="1" value="%D4"></td></tr>
-<tr><td>Encoder Function Order (0-1),   0-Volume, click for station list, 1-Station list, click for Volume</td><td><input type="number" name="encoderFunctionOrder" min="0" max="1" value="%D5"></td></tr>
-<tr><td>Display Mode (0-2),   0-Radio scroller, 1-Clock, 2-Three lines without scroll</td><td><input type="number" name="displayMode" min="0" max="2" value="%D6"></td></tr>
+  <body>
+  <h2>ESP32 Radio - Settings</h2>
+  <form action="/configupdate" method="POST">
+  <table class="tableSettings">
+  <tr><th>Setting</th><th>Value</th></tr>
+  <tr><td>Normal Display Brightness (0-255)</td><td><input type="number" name="displayBrightness" min="1" max="255" value="%D1"></td></tr>
+  <tr><td>Dimmed Display Brightness (0-255)</td><td><input type="number" name="dimmerDisplayBrightness" min="1" max="255" value="%D2"></td></tr>
+  <tr><td>Auto Dimmer Delay Time (1-255 sec.)</td><td><input type="number" name="displayAutoDimmerTime" min="1" max="255" value="%D3"></td></tr>
+  <tr><td>Auto Dimmer</td><td><select name="displayAutoDimmerOn"><option value="1"%S1>On</option><option value="0"%S2>Off</option></select></td></tr>
+  <tr><td>Time Voice Info Every Hour</td><td><select name="timeVoiceInfoEveryHour"><option value="1"%S3>On</option><option value="0"%S4>Off</option></select></td></tr>
+  <tr><td>VU Meter Mode (0-1),    0-dashed lines, 1-continuous lines</td><td><input type="number" name="vuMeterMode" min="0" max="1" value="%D4"></td></tr>
+  <tr><td>Encoder Function Order (0-1),   0-Volume, click for station list, 1-Station list, click for Volume</td><td><input type="number" name="encoderFunctionOrder" min="0" max="1" value="%D5"></td></tr>
+  <tr><td>Display Mode (0-2),   0-Radio scroller, 1-Clock, 2-Three lines without scroll</td><td><input type="number" name="displayMode" min="0" max="2" value="%D6"></td></tr>
 
-<tr><td>VU Meter Visible (Mode 0 only)</td><td><select name="vuMeterOn"><option value="1"%S5>On</option><option value="0"%S6>Off</option></select></td></tr>
+  <tr><td>VU Meter Visible (Mode 0 only)</td><td><select name="vuMeterOn"><option value="1"%S5>On</option><option value="0"%S6>Off</option></select></td></tr>
 
-<!-- <tr><td>VU Meter Refresh Time (20-100ms)</td><td><input type="number" name="vuMeterRefreshTime" min="15" max="100" value="%D7"></td></tr> -->
+  <!-- <tr><td>VU Meter Refresh Time (20-100ms)</td><td><input type="number" name="vuMeterRefreshTime" min="15" max="100" value="%D7"></td></tr> -->
 
-<tr><td>Radio Scroller & VU Meter Refresh Time (15-100ms)</td><td><input type="number" name="scrollingRefresh" min="15" max="100" value="%D8"></td></tr>
-<tr><td>ADC Keyboard Enabled</td><td><select name="adcKeyboardEnabled"><option value="1"%S7>On</option><option value="0"%S8>Off</option></select></td></tr>
+  <tr><td>Radio Scroller & VU Meter Refresh Time (15-100ms)</td><td><input type="number" name="scrollingRefresh" min="15" max="100" value="%D8"></td></tr>
+  <tr><td>ADC Keyboard Enabled</td><td><select name="adcKeyboardEnabled"><option value="1"%S7>On</option><option value="0"%S8>Off</option></select></td></tr>
 
-<tr><td>OLED Power Save Mode</td><td><select name="displayPowerSaveEnabled"><option value="1"%S9>On</option><option value="0"%S10>Off</option></select></td></tr>
-<tr><td>OLED Power Save Time (1-600sek.)</td><td><input type="number" name="displayPowerSaveTime" min="1" max="600" value="%D9"></td></tr>
-<tr><td>Max Volume Extended range -> 1-21 [Off], 1-42 [On]</td><td><select name="maxVolumeExt"><option value="1"%11>On</option><option value="0"%S12>Off</option></select></td></tr>
-</table>
-<input type="submit" value="Update">
-</form>
-<p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>
-</body>
-</html>
+  <tr><td>OLED Power Save Mode</td><td><select name="displayPowerSaveEnabled"><option value="1"%S9>On</option><option value="0"%S10>Off</option></select></td></tr>
+  <tr><td>OLED Power Save Time (1-600sek.)</td><td><input type="number" name="displayPowerSaveTime" min="1" max="600" value="%D9"></td></tr>
+  <tr><td>Max Volume Extended range -> 1-21 [Off], 1-42 [On]</td><td><select name="maxVolumeExt"><option value="1"%11>On</option><option value="0"%S12>Off</option></select></td></tr>
+  </table>
+  <input type="submit" value="Update">
+  </form>
+  <p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>
+  </body>
+  </html>
 )rawliteral";
 
 const char adc_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML>
-<html>
-<head>
-  <link rel='icon' href='/favicon.ico' type='image/x-icon'>
-  <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
-  <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+  <!DOCTYPE HTML>
+  <html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
 
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESP32 Web Radio</title>
-  <style>
-    html {font-family: Arial; display: inline-block; text-align: center;}
-    h1 {font-size: 2.3rem;}
-    table {border: 1px solid black; border-collapse: collapse; margin: 10px auto; width: 40%;}
-    th, td {font-size: 1rem; border: 1px solid gray; padding: 8px; text-align: left;}
-    td:hover {font-weight: bold;}
-    a {color: black; text-decoration: none;}
-    body {max-width: 1380px; margin:0 auto; padding-bottom: 15px;}
-    .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 40%;}
-  </style>
-  </head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h1 {font-size: 2.3rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 10px auto; width: 40%;}
+      th, td {font-size: 1rem; border: 1px solid gray; padding: 8px; text-align: left;}
+      td:hover {font-weight: bold;}
+      a {color: black; text-decoration: none;}
+      body {max-width: 1380px; margin:0 auto; padding-bottom: 15px;}
+      .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 40%;}
+    </style>
+    </head>
 
-<body>
-<h2>ESP32 Radio - ADC Settings</h2>
-<form action="/configadc" method="POST">
-<table class="tableSettings">
-<tr><th>Button</th><th>Value</th></tr>
-<tr><td>keyboardButtonThreshold_0</td><td><input type="number" name="keyboardButtonThreshold_0" min="0" max="4095" value="%D0"></td></tr>
-<tr><td>keyboardButtonThreshold_1</td><td><input type="number" name="keyboardButtonThreshold_1" min="0" max="4095" value="%D1"></td></tr>
-<tr><td>keyboardButtonThreshold_2</td><td><input type="number" name="keyboardButtonThreshold_2" min="0" max="4095" value="%D2"></td></tr>
-<tr><td>keyboardButtonThreshold_3</td><td><input type="number" name="keyboardButtonThreshold_3" min="0" max="4095" value="%D3"></td></tr>
-<tr><td>keyboardButtonThreshold_4</td><td><input type="number" name="keyboardButtonThreshold_4" min="0" max="4095" value="%D4"></td></tr>
-<tr><td>keyboardButtonThreshold_5</td><td><input type="number" name="keyboardButtonThreshold_5" min="0" max="4095" value="%D5"></td></tr>
-<tr><td>keyboardButtonThreshold_6</td><td><input type="number" name="keyboardButtonThreshold_6" min="0" max="4095" value="%D6"></td></tr>
-<tr><td>keyboardButtonThreshold_7</td><td><input type="number" name="keyboardButtonThreshold_7" min="0" max="4095" value="%D7"></td></tr>
-<tr><td>keyboardButtonThreshold_8</td><td><input type="number" name="keyboardButtonThreshold_8" min="0" max="4095" value="%D8"></td></tr>
-<tr><td>keyboardButtonThreshold_9</td><td><input type="number" name="keyboardButtonThreshold_9" min="0" max="4095" value="%D9"></td></tr>
-<tr><td>keyboardButtonThreshold_Shift - Ok/Enter</td><td><input type="number" name="keyboardButtonThreshold_Shift" min="0" max="4095" value="%D10"></td></tr>
-<tr><td>keyboardButtonThreshold_Memory - Bank Menu</td><td><input type="number" name="keyboardButtonThreshold_Memory" min="0" max="4095" value="%D11"></td></tr>
-<tr><td>keyboardButtonThreshold_Band -  Back</td><td><input type="number" name="keyboardButtonThreshold_Band" min="0" max="4095" value="%D12"></td></tr>
-<tr><td>keyboardButtonThreshold_Auto -  Display Mode</td><td><input type="number" name="keyboardButtonThreshold_Auto" min="0" max="4095" value="%D13"></td></tr>
-<tr><td>keyboardButtonThreshold_Scan - Dimmer/Network Bank Update</td><td><input type="number" name="keyboardButtonThreshold_Scan" min="0" max="4095" value="%D14"></td></tr>
-<tr><td>keyboardButtonThreshold_Mute - Mute</td><td><input type="number" name="keyboardButtonThreshold_Mute" min="0" max="4095" value="%D15"></td></tr>
-<tr><td>keyboardButtonThresholdTolerance</td><td><input type="number" name="keyboardButtonThresholdTolerance" min="0" max="50" value="%D16"></td></tr>
-<tr><td>keyboardButtonNeutral</td><td><input type="number" name="keyboardButtonNeutral" min="0" max="4095" value="%D17"></td></tr>
-<tr><td>keyboardSampleDelay (30-300ms)</td><td><input type="number" name="keyboardSampleDelay" min="30" max="300" value="%D18"></td></tr>
-</table>
-<input type="submit" value="ADC Thresholds Update">
-</form>
-<br>
-<button onclick="toggleAdcDebug()">ADC Debug ON/OFF</button>
-<script>
-function toggleAdcDebug() {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/toggleAdcDebug", true);
-    xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-    xhr.onload = function() {
-        if (xhr.status === 200) {
-            alert("ADC Debug is now " + (xhr.responseText === "1" ? "ON" : "OFF"));
-        } else {
-            alert("Error: " + xhr.statusText);
-        }
-    };
-    xhr.send(); // Wysyłanie pustego zapytania POST
-}
-</script>
+  <body>
+  <h2>ESP32 Radio - ADC Settings</h2>
+  <form action="/configadc" method="POST">
+  <table class="tableSettings">
+  <tr><th>Button</th><th>Value</th></tr>
+  <tr><td>keyboardButtonThreshold_0</td><td><input type="number" name="keyboardButtonThreshold_0" min="0" max="4095" value="%D0"></td></tr>
+  <tr><td>keyboardButtonThreshold_1</td><td><input type="number" name="keyboardButtonThreshold_1" min="0" max="4095" value="%D1"></td></tr>
+  <tr><td>keyboardButtonThreshold_2</td><td><input type="number" name="keyboardButtonThreshold_2" min="0" max="4095" value="%D2"></td></tr>
+  <tr><td>keyboardButtonThreshold_3</td><td><input type="number" name="keyboardButtonThreshold_3" min="0" max="4095" value="%D3"></td></tr>
+  <tr><td>keyboardButtonThreshold_4</td><td><input type="number" name="keyboardButtonThreshold_4" min="0" max="4095" value="%D4"></td></tr>
+  <tr><td>keyboardButtonThreshold_5</td><td><input type="number" name="keyboardButtonThreshold_5" min="0" max="4095" value="%D5"></td></tr>
+  <tr><td>keyboardButtonThreshold_6</td><td><input type="number" name="keyboardButtonThreshold_6" min="0" max="4095" value="%D6"></td></tr>
+  <tr><td>keyboardButtonThreshold_7</td><td><input type="number" name="keyboardButtonThreshold_7" min="0" max="4095" value="%D7"></td></tr>
+  <tr><td>keyboardButtonThreshold_8</td><td><input type="number" name="keyboardButtonThreshold_8" min="0" max="4095" value="%D8"></td></tr>
+  <tr><td>keyboardButtonThreshold_9</td><td><input type="number" name="keyboardButtonThreshold_9" min="0" max="4095" value="%D9"></td></tr>
+  <tr><td>keyboardButtonThreshold_Shift - Ok/Enter</td><td><input type="number" name="keyboardButtonThreshold_Shift" min="0" max="4095" value="%D10"></td></tr>
+  <tr><td>keyboardButtonThreshold_Memory - Bank Menu</td><td><input type="number" name="keyboardButtonThreshold_Memory" min="0" max="4095" value="%D11"></td></tr>
+  <tr><td>keyboardButtonThreshold_Band -  Back</td><td><input type="number" name="keyboardButtonThreshold_Band" min="0" max="4095" value="%D12"></td></tr>
+  <tr><td>keyboardButtonThreshold_Auto -  Display Mode</td><td><input type="number" name="keyboardButtonThreshold_Auto" min="0" max="4095" value="%D13"></td></tr>
+  <tr><td>keyboardButtonThreshold_Scan - Dimmer/Network Bank Update</td><td><input type="number" name="keyboardButtonThreshold_Scan" min="0" max="4095" value="%D14"></td></tr>
+  <tr><td>keyboardButtonThreshold_Mute - Mute</td><td><input type="number" name="keyboardButtonThreshold_Mute" min="0" max="4095" value="%D15"></td></tr>
+  <tr><td>keyboardButtonThresholdTolerance</td><td><input type="number" name="keyboardButtonThresholdTolerance" min="0" max="50" value="%D16"></td></tr>
+  <tr><td>keyboardButtonNeutral</td><td><input type="number" name="keyboardButtonNeutral" min="0" max="4095" value="%D17"></td></tr>
+  <tr><td>keyboardSampleDelay (30-300ms)</td><td><input type="number" name="keyboardSampleDelay" min="30" max="300" value="%D18"></td></tr>
+  </table>
+  <input type="submit" value="ADC Thresholds Update">
+  </form>
+  <br>
+  <button onclick="toggleAdcDebug()">ADC Debug ON/OFF</button>
+  <script>
+  function toggleAdcDebug() {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/toggleAdcDebug", true);
+      xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+      xhr.onload = function() {
+          if (xhr.status === 200) {
+              alert("ADC Debug is now " + (xhr.responseText === "1" ? "ON" : "OFF"));
+          } else {
+              alert("Error: " + xhr.statusText);
+          }
+      };
+      xhr.send(); // Wysyłanie pustego zapytania POST
+  }
+  </script>
 
 
-<p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>
-</body>
-</html>
+  <p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>
+  </body>
+  </html>
 )rawliteral";
 
 const char menu_html[] PROGMEM = R"rawliteral(
@@ -820,7 +820,7 @@ const char menu_html[] PROGMEM = R"rawliteral(
   <body>
   <h2>ESP32 Web Radio - Menu</h2>
   <!-- <br><button class="button" onclick="location.href='/fwupdate'">OTA Update (Old)</button><br> -->
-  <!-- <br><button class="button" onclick="location.href='/info'">Info</button><br> -->
+  <br><button class="button" onclick="location.href='/info'">Info</button><br>
   <br><button class="button" onclick="location.href='/ota'">OTA Update</button><br>
   <br><button class="button" onclick="location.href='/adc'">ADC Keyboard Settings</button><br>
   <br><button class="button" onclick="location.href='/list'">SD / SPIFFS Explorer</button><br>
@@ -830,6 +830,97 @@ const char menu_html[] PROGMEM = R"rawliteral(
   </body></html>
 
 )rawliteral";
+
+const char info_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML>
+  <html>
+  <head>
+    <link rel='icon' href='/favicon.ico' type='image/x-icon'>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon.png">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32 Web Radio</title>
+    <style>
+      html {font-family: Arial; display: inline-block; text-align: center;}
+      h2 {font-size: 1.7rem;}
+      table {border: 1px solid black; border-collapse: collapse; margin: 10px auto; width: 40%;}
+      th, td {font-size: 1rem; border: 1px solid gray; padding: 8px; text-align: left;}
+      td:hover {font-weight: bold;}
+      a {color: black; text-decoration: none;}
+	  
+      body {max-width: 1380px; margin:0 auto; padding-bottom: 15px;}
+      .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 40%;} 
+	  .signal-bars {display: inline-block; vertical-align: middle; margin-left: 10px;}
+	  .bar {display: inline-block; width: 5px; margin-right: 2px; background-color: #F2F2F2; height: 10px;}
+      .bar.active { background-color: #4CAF50;}
+	  
+    </style>
+    </head>
+
+  <body>
+  <h2>ESP32 Radio - Info</h2>
+  <form action="/configadc" method="POST">
+  <table class="tableSettings">
+
+  <tr><td>ESP Serial Number:</td><td><input name="espSerial" value="%D0"></td></tr>
+  <tr><td>Firmware version:</td><td><input name="espFw" value="%D1"></td></tr>
+  <tr><td>Hostname:</td><td><input name="hostnameValue" value="%D2"></td></tr>
+  <tr><td>WiFi Signal Strength:</td><td><input id="wifiSignal" value="%D3"> dBm
+  <div class="signal-bars" id="signalBars">
+      <div class="bar" style="height:2px;"></div>
+      <div class="bar" style="height:6px;"></div>
+      <div class="bar" style="height:10px;"></div>
+      <div class="bar" style="height:14px;"></div>
+      <div class="bar" style="height:18px;"></div>
+      <div class="bar" style="height:22px;"></div>
+    </div>
+
+
+  </td></tr>
+  <tr><td>WiFi SSID:</td><td><input name="wifiSsid" value="%D4"></td></tr>
+  <tr><td>IP number:</td><td><input name="ipValue" value="%D5"></td></tr>
+  <tr><td>MAC Address:</td><td><input name="macValue" value="%D6"></td></tr>
+  
+  </table>
+  </form>
+  <br>
+  <p style='font-size: 0.8rem;'><a href='/menu'>Go Back</a></p>
+  
+<script>
+  function updateSignalBars(signal) {
+    const bars = document.querySelectorAll('#signalBars .bar');
+    let level = 0;
+
+    signal = parseInt(signal);
+
+    if (signal >= -50) level = 6;
+    else if (signal >= -57) level = 5;
+    else if (signal >= -66) level = 4;
+    else if (signal >= -74) level = 3;
+    else if (signal >= -81) level = 2;
+    else if (signal >= -88) level = 1;
+    else level = 0;
+
+    bars.forEach((bar, index) => {
+      if (index < level) {
+        bar.classList.add('active');
+      } else {
+        bar.classList.remove('active');
+      }
+    });
+  }
+
+  const signalInput = document.getElementById('wifiSignal');
+  updateSignalBars(signalInput.value);
+
+ </script>
+  </body>
+  </html>
+)rawliteral";
+
+
 
 char stations[MAX_STATIONS][STATION_NAME_LENGTH + 1];  // Tablica przechowująca linki do stacji radiowych (jedna na stację) +1 dla terminatora null
 
@@ -1366,6 +1457,8 @@ void win1250ToUtf8(String& input) {
       case 0xBF: output += "ż"; break;
       case 0xAC: output += "Ź"; break;
       case 0xBC: output += "ź"; break;
+      case 0x8C: output += "Ś"; break;
+      case 0x9C: output += "ś"; break;
       default:
         if (c < 0x80) {
           output += (char)c;
@@ -3918,59 +4011,58 @@ void handlePreOtaUpdateCallback()
 
 void recoveryModeCheck()
 {
+  unsigned long lastTurnTime = 0;
+
   if (digitalRead(SW_PIN2) == 0)
   {
     int8_t recoveryMode = 0;
-    int16_t recoveryModeCounter = 0;
     u8g2.clearBuffer();
     u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(1,14, "RECOVERY / RESET MODE - release encoder");
     u8g2.sendBuffer();
     delay(2000);
+
     while (digitalRead(SW_PIN2) == 0) {;}  
     u8g2.drawStr(1,14, "Please Wait...                         ");
     u8g2.sendBuffer();
     delay(1000);
     u8g2.clearBuffer();
      
+    prev_CLK_state2 = digitalRead(CLK_PIN2);
+    
     while (true)
     {
-      u8g2.drawStr(1,14, "[ -- Rotate Enckoder -- ]            ");
-      CLK_state2 = digitalRead(CLK_PIN2);
-      if (CLK_state2 != prev_CLK_state2 && CLK_state2 == HIGH)  // Sprawdzenie, czy stan CLK zmienił się na wysoki
-      {
-        if (digitalRead(DT_PIN2) == HIGH) 
+      if (millis() - lastTurnTime > 300)
+      {  
+        CLK_state2 = digitalRead(CLK_PIN2);
+        //if (CLK_state2 != prev_CLK_state2 && CLK_state2 == HIGH)  // Sprawdzenie, czy stan CLK zmienił się na wysoki
+        if (CLK_state2 != prev_CLK_state2 && CLK_state2 == LOW)  // Sprawdzenie, czy stan CLK zmienił się na wysoki
         {
-          recoveryMode++;
+          //if (digitalRead(DT_PIN2) == HIGH)
+          if (digitalRead(DT_PIN2) != CLK_state2)
+          { recoveryMode++; }
+          else
+          { recoveryMode--; }
+
           if (recoveryMode > 1) {recoveryMode =1;}
-        }
-        else
-        {
-          recoveryMode--;
           if (recoveryMode < 0) {recoveryMode =0;}
+          lastTurnTime = millis();
         }
+        prev_CLK_state2 = CLK_state2;
       }
-      
-      
+
+      u8g2.drawStr(1,14, "[ -- Rotate Enckoder -- ]            ");
+
       if (recoveryMode == 0)
       {
         u8g2.drawStr(1,28, ">> RESET BANK=1, STATION=1 <<");
         u8g2.drawStr(1,42, "   RESET WIFI SSID, PASSWD   ");  
-       // u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");  
       }
       else if (recoveryMode == 1)
       {
         u8g2.drawStr(1,28, "   RESET BANK=1, STATION=1   ");
         u8g2.drawStr(1,42, ">> RESET WIFI SSID, PASSWD <<");      
-       // u8g2.drawStr(1,56, "   WEB UPDATE PORTAL         ");
       }
-      
-      else if (recoveryMode == 2)
-      {
-        u8g2.drawStr(1,28, "   RESET BANK=1, STATION=1   ");
-        u8g2.drawStr(1,42, "   RESET WIFI SSID, PASSWD   ");      
-       // u8g2.drawStr(1,56, ">> WEB UPDATE PORTAL       <<");
-      }    
       u8g2.sendBuffer();
       
       if (digitalRead(SW_PIN2) == 0)
@@ -3997,27 +4089,13 @@ void recoveryModeCheck()
           delay(3000);
           ESP.restart();
         }
-        else if (recoveryMode == 2)
-        {
-          u8g2.clearBuffer();
-          u8g2.drawStr(1,14, "WEB  PORTAL STARTED         ");
-          u8g2.drawStr(1,28, "Connect to WiFi ESP-Radio   ");
-          u8g2.drawStr(1,42, "Open http://192.168.4.1     ");
-          u8g2.sendBuffer();
-          //wifiManager.startWebPortal();
-          wifiManager.startConfigPortal("ESP32-Radio");
-          delay(3000);
-          while(true) { wifiManager.process(); wifiManager.setPreOtaUpdateCallback(handlePreOtaUpdateCallback);} 
-        }
-
-
-
       }
-      prev_CLK_state2 = CLK_state2;
-      delay(200);
+      
+      delay(20);
     }   
   } 
 }
+
 void displayDimmer(bool dimmerON)
 {
   displayDimmerActive = dimmerON;
@@ -6085,6 +6163,24 @@ void setup()
         request->send(400, "text/plain", "Missing URL parameter");
       }  
     });
+
+server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) 
+    {
+      String html = String(info_html);
+  
+      
+      html.replace("%D1", String(softwareRev).c_str()); 
+      html.replace("%D2", String(hostname).c_str()); 
+      html.replace("%D3", String(WiFi.RSSI()).c_str()); 
+      html.replace("%D4", String(wifiManager.getWiFiSSID()).c_str()); 
+      html.replace("%D5", currentIP.c_str()); 
+      html.replace("%D6", WiFi.macAddress().c_str()); 
+      html.replace("%D0", String(ESP.getEfuseMac()).c_str()); 
+
+      request->send(200, "text/html", html);
+
+    });
+
 
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
