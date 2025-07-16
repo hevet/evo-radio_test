@@ -23,7 +23,7 @@
 #include <ESPmDNS.h>           // Blibioteka mDNS dla ESP
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.18.12"  // Wersja oprogramowania radia
+#define softwareRev "v3.18.13"  // Wersja oprogramowania radia
 #define hostname "evoradio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 
@@ -3020,6 +3020,7 @@ void displayPowerSave(bool saveON)
 void updateTimer() 
 {
   u8g2.setDrawColor(1);  // Ustaw kolor na biały
+  bool showDots;
 
   if (timeDisplay == true) 
   {
@@ -3064,7 +3065,7 @@ void updateTimer()
         return;  // Zakończ funkcję, gdy nie udało się uzyskać czasu
       }
       
-      bool showDots = (timeinfo.tm_sec % 2 == 0); // Parzysta sekunda = pokazuj dwukropek
+      showDots = (timeinfo.tm_sec % 2 == 0); // Parzysta sekunda = pokazuj dwukropek
 
       // Konwertuj godzinę, minutę i sekundę na stringi w formacie "HH:MM:SS"
       char timeString[9];  // Bufor przechowujący czas w formie tekstowej
@@ -3149,14 +3150,18 @@ void updateTimer()
       displayPowerSave(0); 
       // Struktura przechowująca informacje o czasie
       struct tm timeinfo;
+      
       if (!getLocalTime(&timeinfo, 5)) 
       {
         Serial.println("Nie udało się uzyskać czasu");
         return;  // Zakończ funkcję, gdy nie udało się uzyskać czasu
       }
+      showDots = (timeinfo.tm_sec % 2 == 0); // Parzysta sekunda = pokazuj dwukropek
       char timeString[9];  // Bufor przechowujący czas w formie tekstowej
       
-      snprintf(timeString, sizeof(timeString), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      //snprintf(timeString, sizeof(timeString), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+      if (showDots) snprintf(timeString, sizeof(timeString), "%2d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+      else snprintf(timeString, sizeof(timeString), "%2d %02d", timeinfo.tm_hour, timeinfo.tm_min);
       u8g2.setFont(spleen6x12PL);
       
       if ((displayMode == 0) || (displayMode == 2)) { u8g2.drawStr(0, 63, "                         ");}
@@ -3168,7 +3173,7 @@ void updateTimer()
         if (displayMode == 1) { u8g2.drawStr(0, 33, "... No audio stream ! ...");}
         lastCheckTime = millis(); // Zaktualizuj czas ostatniego sprawdzenia
       }       
-      u8g2.drawStr(208, 63, timeString);
+      u8g2.drawStr(226, 63, timeString);
 
     }
   }
