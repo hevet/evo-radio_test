@@ -24,7 +24,7 @@
 //#include "index.c"
 
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.19.11"  // Wersja oprogramowania radia
+#define softwareRev "v3.19.19"  // Wersja oprogramowania radia
 #define hostname "evoradio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 
@@ -64,7 +64,7 @@
 #define STATION_NAME_LENGTH 220  // Nazwa stacji wraz z bankiem i numerem stacji do wyświetlenia w pierwszej linii na ekranie
 #define MAX_FILES 100            // Maksymalna liczba plików lub katalogów w tablicy directoriesz
 
-//#define bank_nr_max 16           // Numer jaki może osiągnac maksymalnie zmienna bank_nr czyli ilość banków
+#define bank_nr_max 16           // Numer jaki może osiągnac maksymalnie zmienna bank_nr czyli ilość banków
 
 // DEBUG PRINTS - ON/OFF
 #define f_debug_web_on 0         // Flaga właczenia wydruku debug_web
@@ -89,7 +89,6 @@
 #define STATIONS_URL16 "https://raw.githubusercontent.com/dzikakuna/ESP32_radio_streams/main/bank16.txt"  // Adres URL do pliku z listą stacji radiowych
 #define STATIONS_URL17 "https://raw.githubusercontent.com/dzikakuna/ESP32_radio_streams/main/bank17.txt"  // Adres URL do pliku z listą stacji radiowych
 #define STATIONS_URL18 "https://raw.githubusercontent.com/dzikakuna/ESP32_radio_streams/main/bank18.txt"  // Adres URL do pliku z listą stacji radiowych
-
 
 // ############### DEFINICJA DLA PILOTa IR w standardzie NEC - przeniesiona do pliku txt na karcie ############### //
 uint16_t rcCmdVolumeUp = 0;   // Głosnosc +
@@ -118,6 +117,7 @@ uint16_t rcCmdKey6 = 0;       // Przycisk "6"
 uint16_t rcCmdKey7 = 0;       // Przycisk "7"
 uint16_t rcCmdKey8 = 0;       // Przycisk "8"
 uint16_t rcCmdKey9 = 0;       // Przycisk "9"
+
 // Koniec definicji pilota IR
 
 int currentSelection = 0;                     // Numer aktualnego wyboru na ekranie OLED
@@ -151,12 +151,13 @@ const uint8_t stationNamePositionYmode3 = 34;
 uint16_t stationStringScrollLength = 0;
 uint8_t maxStationVisibleStringScrollLength = 46;
 bool stationNameFromStream = 0;               // Flaga definiujaca czy wyswietlamy nazwe stacji z plikow Banku pamieci czy z informacji nadawanych w streamie
-uint8_t bank_nr_max = 16;
+bool f_powerOff = 0;                          // Flaga aktywnego trybu power off (ESP light sleep)
+//uint8_t bank_nr_max = 16;
 
 
 // ---- Głosowe odtwarzanie czasu co godzinę ---- //
 bool voiceTimePlay = false; 
-bool voiceTimePlayActionTaken = false;
+//bool voiceTimePlayActionTaken = false;
 bool timeVoiceInfoEveryHour = true;
 
 
@@ -218,7 +219,7 @@ bool resumePlay = false;            // Flaga wymaganego uruchomienia odtwarzania
 bool fwupd = false;               // Flaga blokujaca main loop podczas aktualizacji oprogramowania
 bool configIrExist = false;       // Flaga informująca o istnieniu poprawnej konfiguracji pilota IR
 bool wsAudioRefresh = false;      // Flaga informujaca o potrzebe odswiezeninia Station Text za pomoca Web Sokcet
-
+bool f_voiceTimeBlock = false;
 
 
 unsigned long debounceDelay = 300;    // Czas trwania debouncingu w milisekundach
@@ -305,7 +306,8 @@ String url2play = "";
 File myFile;  // Uchwyt pliku
 
 U8G2_SSD1322_NHD_256X64_F_4W_HW_SPI u8g2(U8G2_R2, /* cs=*/CS_OLED, /* dc=*/DC_OLED, /* reset=*/RESET_OLED);  // Hardware SPI 3.12inch OLED
-//U8G2_SH1122_256X64_F_4W_HW_SPI u8g2(U8G2_R0, /* cs=*/ CS_OLED, /* dc=*/ DC_OLED, /* reset=*/ RESET_OLED);		// Hardware SPI  2.08inch OLED
+
+// U8G2_SH1122_256X64_F_4W_HW_SPI u8g2(U8G2_R0, /* cs=*/ CS_OLED, /* dc=*/ DC_OLED, /* reset=*/ RESET_OLED);		// Hardware SPI  2.08inch OLED
 //U8G2_SSD1363_256X128_F_4W_HW_SPI u8g2(U8G2_R0, /* cs=*/CS_OLED, /* dc=*/DC_OLED, /* reset=*/RESET_OLED);  // Hardware SPI 3.12inch OLED
 
 // Przypisujemy port serwera www
@@ -745,7 +747,7 @@ const char config_html[] PROGMEM = R"rawliteral(
   <tr><td>Time Voice Info Every Hour, default:On</td><td><select name="timeVoiceInfoEveryHour"><option value="1"%S3>On</option><option value="0"%S4>Off</option></select></td></tr>
   <tr><td>VU Meter Mode (0-1),    0-dashed lines, 1-continuous lines</td><td><input type="number" name="vuMeterMode" min="0" max="1" value="%D4"></td></tr>
   <tr><td>Encoder Function Order (0-1),   0-Volume, click for station list, 1-Station list, click for Volume</td><td><input type="number" name="encoderFunctionOrder" min="0" max="1" value="%D5"></td></tr>
-  <tr><td>Display Mode (0-3),   0-Radio scroller, 1-Clock, 2-Three lines, 3- Minimal</td><td><input type="number" name="displayMode" min="0" max="3" value="%D6"></td></tr>
+  <tr><td>Display Mode (0-4),   0-Radio scroller, 1-Clock, 2-Three lines, 3- Minimal 4-VU meters</td><td><input type="number" name="displayMode" min="0" max="4" value="%D6"></td></tr>
 
   
 
@@ -1256,8 +1258,8 @@ unsigned long pulse_end_low = 0;        // Czas końcowy impulsu
 unsigned long pulse_duration_low = 0;   // Czas trwania impulsu
 
 
-unsigned long ir_code = 0;  // Zmienna do przechowywania kodu IR
-int bit_count = 0;          // Licznik bitów w odebranym kodzie
+volatile unsigned long ir_code = 0;  // Zmienna do przechowywania kodu IR
+volatile int bit_count = 0;          // Licznik bitów w odebranym kodzie
 
 // Progi przełączeń dla sygnałów czasowych pilota IR
 const int LEAD_HIGH = 9050;         // 9 ms sygnał wysoki (początkowy)
@@ -1517,9 +1519,15 @@ void saveStationToPSRAM(const char *station)
       u8g2.drawStr(75, 36, String(stationsCount).c_str());  // Napisz licznik pobranych stacji
 
       u8g2.drawRFrame(21, 42, 212, 12, 3);  // Ramka paska postępu ladowania stacji stacji w>8 h>8
-      x = (stationsCount * 2) + 8;          // Dodajemy gdy stationCount=1 + 8 aby utrzymac warunek dla zaokrąglonego drawRBox - szerokość W>6 h>6 ma byc W>=2*(r+1), h >= 2*(r+1)
-      u8g2.drawRBox(23, 44, x, 8, 2);       // Pasek postepu ladowania stacji z serwera lub karty SD
-      u8g2.sendBuffer();
+      
+      //if (stationsCount % 10 == 0)
+      //{
+        x = (stationsCount * 2) + 8;          // Dodajemy gdy stationCount=1 + 8 aby utrzymac warunek dla zaokrąglonego drawRBox - szerokość W>6 h>6 ma byc W>=2*(r+1), h >= 2*(r+1)
+        u8g2.drawRBox(23, 44, x, 8, 2);       // Pasek postepu ladowania stacji z serwera lub karty SD        
+      //}
+      
+      
+      u8g2.sendBuffer();  
     } else {
       // Informacja o błędzie w przypadku zbyt długiego linku do stacji.
       Serial.println("Błąd: Link do stacji jest zbyt długi");
@@ -2038,6 +2046,57 @@ void displayRadio()
     u8g2.clearBuffer();
     u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(0,10, "BANK:");
+    
+    /*
+    // Logo FLAC/MP3/AAC... w górnej belce, dla FLAC malujemy na białym tle
+    if (flac == true) {
+      u8g2.drawRBox(57,1,22,9,3);
+      u8g2.setDrawColor(0);
+      u8g2.setFont(u8g2_font_04b_03_tr);
+      u8g2.drawStr(60,8, streamCodec.c_str());
+      u8g2.setDrawColor(1);
+    } 
+    else {
+      u8g2.drawRFrame(57,1,22,9,3);
+      u8g2.setFont(u8g2_font_04b_03_tr);
+      u8g2.drawStr(61,8, streamCodec.c_str());
+    }
+    */
+    // Logo FLAC/MP3/AAC... w górnej belce, dla FLAC malujemy na białym tle
+    
+    if (flac == true) {
+      //u8g2.drawRFrame(49,2,41,9,3);
+      //u8g2.drawRBox(49,2,20,9,3);
+      
+      //Serial.print("debug -> Display Mode-3 bitrateWidth:");
+      //Serial.println(u8g2.getStrWidth(bitrateString.c_str()));
+
+      if (u8g2.getStrWidth(bitrateString.c_str()) > 20) {u8g2.drawFrame(49,2,41,9);}  // 128 ->18px, regulujemy ranke w zaleznosci czy bitrate ma 4 czy 3 cyfry
+      else { u8g2.drawFrame(49,2,38,9);;}
+      
+      u8g2.drawBox(49,2,20,9);
+      u8g2.setFont(u8g2_font_04b_03_tr);
+      u8g2.setDrawColor(0);
+      u8g2.drawStr(51,9, streamCodec.c_str());
+      u8g2.setDrawColor(1);
+      u8g2.drawStr(71,9, bitrateString.c_str());
+    } 
+
+    else {
+      //u8g2.drawRFrame(50,2,38,9,3);
+      //u8g2.drawRBox(50,2,20,9,3);
+      u8g2.drawFrame(50,2,38,9);
+      u8g2.drawBox(50,2,20,9);
+      u8g2.setFont(u8g2_font_04b_03_tr);
+      u8g2.setDrawColor(0);
+      u8g2.drawStr(53,9, streamCodec.c_str());
+      u8g2.setDrawColor(1);
+      u8g2.drawStr(72,9, bitrateString.c_str());
+
+    }
+
+
+    u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(98,10, "STATION:");
     u8g2.drawGlyph(181,10, 0x9E); // 0x9E w czionce Spleen to zakodowany symbol głosniczka
     u8g2.drawStr(190,10, String(volumeValue).c_str());
@@ -2083,7 +2142,7 @@ void my_audio_info(Audio::msg_t m)
       //int bitrateIndex = msg.indexOf("BitRate:");
       int bitrateIndex = msg.indexOf("Bitrate (b/s):");
       
-      if ((bitrateIndex != -1) && (flac == false))
+      if (bitrateIndex != -1) //&& (flac == false))
       {
         int endIndex = msg.indexOf('\n', bitrateIndex);
         if (endIndex == -1) endIndex = msg.length();
@@ -2101,7 +2160,7 @@ void my_audio_info(Audio::msg_t m)
         wsAudioRefresh = true;  //Web Socket - audio refresh
         Serial.printf("bitrate: .... %s\n", m.msg); // icy-bitrate or bitrate from metadata
       }
-
+      
       int bitrateIndexFlac = msg.indexOf("FLAC bitspersample:");
       if ((bitrateIndexFlac != -1) && (flac == true))
       {
@@ -2143,7 +2202,7 @@ void my_audio_info(Audio::msg_t m)
         
 
         f_audioInfoRefreshDisplayRadio = true;
-        f_audioInfoRefreshStationString = true;	
+        //f_audioInfoRefreshStationString = true;	
         wsAudioRefresh = true;  //Web Socket - audio refresh    
       }
 
@@ -2156,7 +2215,7 @@ void my_audio_info(Audio::msg_t m)
         bitsPerSampleString = msg.substring(bitsPerSampleIndex + 15, endIndex);
         bitsPerSampleString.trim();
         f_audioInfoRefreshDisplayRadio = true;
-        f_audioInfoRefreshStationString = true;	
+        //f_audioInfoRefreshStationString = true;	
         wsAudioRefresh = true;  //Web Socket - audio refresh    
       }
     
@@ -2189,8 +2248,8 @@ void my_audio_info(Audio::msg_t m)
       // --- Debug ---
       Serial.printf("info: ....... %s\n", m.msg);
       
-      //f_audioInfoRefreshDisplayRadio = true; // refresh displayRadio screen
-      f_audioInfoRefreshStationString = true;	// refresh scroller
+      f_audioInfoRefreshDisplayRadio = true; // refresh displayRadio screen
+      //f_audioInfoRefreshStationString = true;	// refresh scroller
       wsAudioRefresh = true;  //Web Socket - audio refresh    
     }
     break;
@@ -2206,6 +2265,7 @@ void my_audio_info(Audio::msg_t m)
         calcNec();        // Przeliczamy kod pilota na pełny kod NEC
         resumePlay = false;
       }
+      
     }
     break;
 
@@ -2219,7 +2279,7 @@ void my_audio_info(Audio::msg_t m)
       bitrateStringInt = bitrateStringInt / 1000;
       bitrateString = String(bitrateStringInt);
       
-      //f_audioInfoRefreshDisplayRadio = true;
+      f_audioInfoRefreshDisplayRadio = true;
       wsAudioRefresh = true;  //Web Socket - audio refresh
       Serial.printf("info: ....... evt_bitrate: %s\n", m.msg); break; // icy-bitrate or bitrate from metadata
     }
@@ -2236,7 +2296,7 @@ void my_audio_info(Audio::msg_t m)
 
       f_audioInfoRefreshStationString = true;
       wsAudioRefresh = true;
-      Serial.printf("station name: %s\n", m.msg); // station name lub icy-name
+      Serial.printf("info: ....... station name: %s\n", m.msg); // station name lub icy-name
 	  }
     break; 
 
@@ -2245,11 +2305,10 @@ void my_audio_info(Audio::msg_t m)
       stationString = String(m.msg);
 		  stationString.trim();
 		
-      ActionNeedUpdateTime = true;
+      //ActionNeedUpdateTime = true;
       f_audioInfoRefreshStationString = true;	
       wsAudioRefresh = true;
       
-
       // Debug
       Serial.printf("info: ....... stream title: %s\n", m.msg);
       //Serial.printf("info: ....... %s\n", m.msg);
@@ -2288,7 +2347,7 @@ void bankMenuDisplay()
   float segmentWidth = (float)212 / bank_nr_max;
 
   displayStartTime = millis();
-  Serial.println("debug--BankMenuDisplay");
+  Serial.println("debug -> BankMenuDisplay");
   volumeSet = false;
   //previous_bank_nr = bank_nr;  // jesli weszlimy do menu "wybór banku" to zapisujemy obecny bank zanim zaczniemy krecic enkoderem
   bankMenuEnable = true;
@@ -2296,7 +2355,7 @@ void bankMenuDisplay()
   displayActive = true;
   //currentOption = BANK_LIST;  // Ustawienie listy banków do przewijania i wyboru
   String bankNrStr = String(bank_nr);
-  Serial.println("Wyświetlenie listy banków");
+  Serial.println("debug -> Wyświetlenie listy banków");
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_fub14_tf);
   u8g2.drawStr(80, 33, "BANK ");
@@ -2882,9 +2941,9 @@ void changeStation()
 
   sampleRateString = "--.-";
   bitsPerSampleString = "--";
-  bitrateString = "0";
+  bitrateString = "-?-";
 
-  Serial.println("debug PSRAM -> Read station from PSRAM");
+  Serial.println("debug changeStation -> Read station from PSRAM");
   String stationUrl = "";
 
   // Odczyt stacji pod daną komórka pamieci PSRAM:
@@ -2906,7 +2965,7 @@ void changeStation()
   
   // Wyciągnij pierwsze 42 znaki i przypisz do stationName
   stationName = line.substring(0, 41);  //42 Skopiuj pierwsze 42 znaki z linii
-  Serial.print("Nazwa stacji: ");
+  Serial.print("debug changeStation -> Nazwa stacji: ");
   Serial.println(stationName);
 
   // Znajdź część URL w linii, np. po numerze stacji
@@ -2923,7 +2982,7 @@ void changeStation()
   
   if (stationUrl.isEmpty()) // jezeli link URL jest pusty
   {
-    Serial.println("Błąd: Nie znaleziono stacji dla podanego numeru.");
+    Serial.println("debug changeStation -> Błąd: Nie znaleziono stacji dla podanego numeru.");
     return;
   }
   
@@ -2934,9 +2993,9 @@ void changeStation()
   if (stationUrl.startsWith("http://") || stationUrl.startsWith("https://")) 
   {
     // Wydrukuj nazwę stacji i link na serialu
-    Serial.print("Aktualnie wybrana stacja: ");
+    Serial.print("debug changeStation -> Aktualnie wybrana stacja: ");
     Serial.println(station_nr);
-    Serial.print("Link do stacji: ");
+    Serial.print("debug changeStation -> Link do stacji: ");
     Serial.println(stationUrl);
     
     u8g2.setFont(spleen6x12PL);  // wypisujemy jaki stream jakie stacji jest ładowany
@@ -2967,8 +3026,8 @@ void changeStation()
   } 
   else 
   {
-    Serial.println("Błąd: link stacji nie zawiera 'http' lub 'https'");
-    Serial.println("Odczytany URL: " + stationUrl);
+    Serial.println("debug changeStation -> Błąd: link stacji nie zawiera 'http' lub 'https'");
+    Serial.println("debug changeStation -> Odczytany URL: " + stationUrl);
   }
   currentSelection = station_nr - 1; // ustawiamy stacje na liscie na obecnie odtwarzaczną po zmianie stacji
   firstVisibleLine = currentSelection + 1; // pierwsza widoczna lina to grająca stacja przy starcie
@@ -2977,7 +3036,6 @@ void changeStation()
    firstVisibleLine = currentSelection - 3;
   }
   wsStationChange(station_nr);
-  //updateTimer();
   ActionNeedUpdateTime = true;
 }
 
@@ -3060,29 +3118,6 @@ void updateTimer()
 
   if (timeDisplay == true) 
   {
-    /*
-    if ((audio.isRunning() == true) && (displayMode == 0) || (displayMode == 2)) 
-    {
-      if (mp3 == true) {u8g2.drawStr(135, 63, "MP3");}
-      if (flac == true) {u8g2.drawStr(135, 63, "FLAC");}
-      if (aac == true) {u8g2.drawStr(135, 63, "AAC");}
-      if (vorbis == true) {u8g2.drawStr(135, 63, "VBR");}
-    }
-    */
-
-    /*
-    else if ((audio.isRunning() == true) && (displayMode == 3)) 
-    {
-      
-      //u8g2.setFont(u8g2_font_04b_03_tr);
-      if (mp3 == true)  {u8g2.drawStr(235, 56, "MP3");}
-      if (flac == true) {u8g2.drawStr(235, 56, "FLAC");}
-      if (aac == true)  {u8g2.drawStr(235, 56, "AAC");}
-      if (vorbis == true) {u8g2.drawStr(235, 56, "VBR");}
-     
-    }
-    */
-
 
     if ((timeDisplay == true) && (audio.isRunning() == true))
     {
@@ -3101,10 +3136,8 @@ void updateTimer()
 
       // Konwertuj godzinę, minutę i sekundę na stringi w formacie "HH:MM:SS"
       char timeString[9];  // Bufor przechowujący czas w formie tekstowej
-      //snprintf(timeString, sizeof(timeString), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-
-      if ((timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0) && (timeVoiceInfoEveryHour == true)) {voiceTimePlay = true; } // Sprawdzamy czy wybiła pełna godzina, jesli włączony informacja głosowa co godzine to odtwarzamy
-
+      if ((timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0) && (timeVoiceInfoEveryHour == true) && (f_voiceTimeBlock == false)) {voiceTimePlay = true; f_voiceTimeBlock = true;} // Sprawdzamy czy wybiła pełna godzina, jesli włączony informacja głosowa co godzine to odtwarzamy
+      
       if ((displayMode == 0) || (displayMode == 2)) // Tryb podstawowy i 3 linijki tesktu
       { 
         //snprintf(timeString, sizeof(timeString), "%2d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
@@ -4408,7 +4441,7 @@ void volumeDisplay()
   displayActive = true;
   volumeSet = true;
   //volumeMute = false;
-  Serial.print("Wartość głośności: ");
+  Serial.print("debug volume -> Wartość głośności: ");
   Serial.println(volumeValue);
   audio.setVolume(volumeValue);  // zakres 0...21
   String volumeValueStr = String(volumeValue);  // Zamiana liczby VOLUME na ciąg znaków
@@ -4441,7 +4474,7 @@ void volumeUp()
     volumeValue = maxVolume;
   }
 
-  Serial.print("Wartość głośności: ");
+  Serial.print("debug volume -> Wartość głośności: ");
   Serial.println(volumeValue);
   audio.setVolume(volumeValue);  // zakres 0...21
   String volumeValueStr = String(volumeValue);  // Zamiana liczby VOLUME na ciąg znaków
@@ -4468,7 +4501,7 @@ void volumeDown()
   {
     volumeValue = 1;
   } 
-  Serial.print("Wartość głośności: ");
+  Serial.print("debug volume -> Wartość głośności: ");
   Serial.println(volumeValue);
   audio.setVolume(volumeValue);  // zakres 0...21
   String volumeValueStr = String(volumeValue);  // Zamiana liczby VOLUME na ciąg znaków
@@ -4485,9 +4518,7 @@ void volumeDown()
 
 void clearFlags()  // Kasuje wszystkie flagi przebywania w menu, funkcjach itd. Pozwala pwrócic do wyswietlania ekranu głownego
 {
-  //displayDimmer(0);
   debugKeyboard = false;
-  //menuEnable = false;
   displayActive = false;
   timeDisplay = true;
   listedStations = false;
@@ -4496,6 +4527,7 @@ void clearFlags()  // Kasuje wszystkie flagi przebywania w menu, funkcjach itd. 
   bankNetworkUpdate = false;
   equalizerMenuEnable = false;
   rcInputDigitsMenuEnable = false;
+  f_voiceTimeBlock = false;
   rcInputDigit1 = 0xFF; // czyscimy cyfre 1, flaga pustej zmiennej to FF
   rcInputDigit2 = 0xFF; // czyscimy cyfre 2, flaga pustej zmiennej to FF
   station_nr = stationFromBuffer;
@@ -4707,6 +4739,7 @@ void IRAM_ATTR pulseISR()
         }
 
       }
+		  
     }
   }
  //runTime2 = esp_timer_get_time();
@@ -4954,7 +4987,7 @@ void recoveryModeCheck()
 void displayDimmer(bool dimmerON)
 {
   displayDimmerActive = dimmerON;
-  Serial.print("debug display -> displayDimmerActive: ");
+  Serial.print("debug displayDimmer -> displayDimmerActive: ");
   Serial.println(displayDimmerActive);
   
   if ((dimmerON == 1) && (displayActive == false) && (fwupd == false)) { u8g2.setContrast(dimmerDisplayBrightness);}
@@ -4973,10 +5006,11 @@ void displayDimmerTimer()
 {
   displayDimmerTimeCounter++;
   
-  if ((displayActive == true) && (displayDimmerActive == true)) // Jezeli wysweitlacz aktywny i jest przyciemniony
+  if ((displayActive == true) ) //&& (displayDimmerActive == true) Jezeli wysweitlacz aktywny i jest przyciemniony
   { 
     displayDimmerTimeCounter = 0;
-    displayDimmer(0);
+    //Serial.println("debug displayDimmerTimer -> displayDimmerTimeCounter = 0");
+    if (displayDimmerActive == true) {displayDimmer(0);}
   }
   // Jesli upłynie czas po którym mamy przyciemnic wyswietlacz i funkcja przyciemniania włączona oraz nie jestemswy w funkcji aktulizacji OTA to
   if ((displayDimmerTimeCounter >= displayAutoDimmerTime) && (displayAutoDimmerOn == true) && (fwupd == false)) 
@@ -4984,11 +5018,10 @@ void displayDimmerTimer()
     if (displayDimmerActive == false) // jesli wyswietlacz nie jest jeszcze przyciemniony
     {
       displayDimmer(1); // wywolujemy funkcje przyciemnienia z parametrem 1 (załacz)
-      displayDimmerTimeCounter = 0;
     }
+    displayDimmerTimeCounter = 0;
   }
 
-  ///*
   displayPowerSaveTimeCounter++;
   
   if ((displayPowerSaveTimeCounter >= displayPowerSaveTime) && (displayPowerSaveEnabled == true) && (fwupd == false)) 
@@ -4996,18 +5029,6 @@ void displayDimmerTimer()
     displayPowerSaveTimeCounter = 0;
     displayPowerSave(1);
   }
-  //*/
-
-  /*
-  if (audio.isRunning() == false) // Przyciemniamy wyswietlacz oraz właczamy tryb Power Save tylko jest poprawnie odtwarzaczmy stream audio
-  {
-    displayPowerSave(0);
-    displayDimmer(0);
-    displayDimmerTimeCounter = 0;
-    displayPowerSaveTimeCounter = 0;
-  }
-  */
-
 }
 
 
@@ -5993,16 +6014,15 @@ void voiceTime()
   char timeString[9];  // Bufor przechowujący czas w formie tekstowej
   if (!getLocalTime(&timeinfo, 5)) 
   {
-    Serial.println("Nie udało się uzyskać czasu funkcji voice time");
+    Serial.println("debug voice time PL -> Nie udało się uzyskać czasu funkcji voice time");
     return;  // Zakończ funkcję, gdy nie udało się uzyskać czasu
   }
 
   snprintf(timeString, sizeof(timeString), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
   time_s = String(timeString);
   int h = time_s.substring(0,2).toInt();
-  Serial.print("wartosc h:");
-  Serial.print(h);
   snprintf(chbuf, sizeof (chbuf), "Jest godzina %i:%02i:00", h, time_s.substring(3,5).toInt());
+  Serial.print("debug voice time PL -> ");
   Serial.println(chbuf);
   audio.connecttospeech(chbuf, "pl");
 }
@@ -6018,7 +6038,7 @@ void voiceTimeEn()
 
   if (!getLocalTime(&timeinfo, 5)) 
   {
-    Serial.println("Nie udało się uzyskać czasu funkcji voice time");
+    Serial.println("debug voice time EN -> Nie udało się uzyskać czasu funkcji voice time");
     return;  // Zakończ funkcję, gdy nie udało się uzyskać czasu
   }
 
@@ -6028,13 +6048,13 @@ void voiceTimeEn()
   if(h > 12){h -= 12; strcpy(am_pm,"pm.");}
   //snprintf(chbuf, sizeof (chbuf), "Jest godzina %i:%02i", h, time_s.substring(3,5).toInt());
   sprintf(chbuf, "It is now %i%s and %i minutes", h, am_pm, time_s.substring(3,5).toInt());
-  Serial.println(chbuf);
+  Serial.print("debug voice time EN -> ");
   Serial.println(chbuf);
   audio.connecttospeech(chbuf, "en");
 }
 
 
-void readRemoteConfig() 
+void readRemoteControlConfig() 
 {
 
   Serial.println("IR - Config, odczyt pliku konfiguracji pilota IR remote.txt z karty");
@@ -6199,6 +6219,154 @@ void listFiles(String path, String &html)
     root.close();
 }
 
+//####################################################################################### OBSŁUGA POWER OFF ####################################################################################### //
+/*
+void powerOffAnimation() 
+{
+  int height = u8g2.getDisplayHeight();
+
+  // Animacja 
+  for (int i = 0; i < height; i += 2) 
+  {
+    //u8g2.clearBuffer();
+    u8g2.setDrawColor(0);
+
+    // rysujemy ciemniejące poziome linie
+    for (int y = 0; y < height - i; y++) {
+      u8g2.drawHLine(0, y + i / 2, u8g2.getDisplayWidth());
+    }
+    
+    u8g2.sendBuffer();
+    delay(20); // czas między krokami animacji
+  }
+
+  // Fade out do całkowitej czerni
+  for (int t = 0; t < 5; t++) {
+    u8g2.clearBuffer();
+    u8g2.sendBuffer();
+    delay(50);
+  }
+  u8g2.setDrawColor(1);
+}
+*/
+
+void powerOffAnimation() 
+{
+  int width  = u8g2.getDisplayWidth();
+  int height = u8g2.getDisplayHeight();
+
+  // Animacja "zamykania" ekranu od góry i dołu
+  for (int i = 0; i < height / 2; i += 2) 
+  {
+    u8g2.clearBuffer();
+
+    // Rysujemy prostokąt w środku ekranu, który się kurczy
+    int boxHeight = height - 2 * i;
+    u8g2.drawBox(0, i, width, boxHeight);
+
+    u8g2.sendBuffer();
+    delay(20); // czas między krokami animacji
+  }
+
+  // Po zamknięciu — "zanikanie" linii środkowej
+  for (int t = 0; t < 3; t++) 
+  {
+    u8g2.clearBuffer();
+    u8g2.drawHLine(0, height / 2, width);
+    u8g2.sendBuffer();
+    delay(50);
+  }
+
+  // Całkowite wygaszenie
+  u8g2.clearBuffer();
+  u8g2.sendBuffer();
+}
+
+
+
+void prePowerOff()
+{
+  displayActive = true;
+  ws.closeAll();
+  audio.stopSong();
+  audio.setVolume(0);
+  u8g2.setContrast(displayBrightness); // Ustawiamy maksymalną jasnosc
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_fub14_tf);
+  u8g2.drawStr(65, 36, "POWER OFF");
+  u8g2.sendBuffer();
+  delay(2000);
+  powerOffAnimation();
+  u8g2.setPowerSave(1); // Wyłącz ekran
+}
+
+void powerOff()
+{
+ f_powerOff = true;
+ Serial.println("debug Power -> Usypiam ESP32 - POWER OFF");
+ bit_count = 0;
+ ir_code = 0;
+ delay(10);
+ esp_sleep_enable_gpio_wakeup();
+ gpio_wakeup_enable((gpio_num_t)recv_pin, GPIO_INTR_LOW_LEVEL);
+ delay(250);
+ esp_light_sleep_start();
+ 
+ // Od tego miejsca startujemy po przerwaniu na IR input
+ 
+ Serial.println("debug Power ->  ESP CPU obudzony z light sleep!");
+ delay(250);
+ gpio_wakeup_disable((gpio_num_t)recv_pin);
+ pinMode(recv_pin, INPUT);
+ attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
+ delay(500); // Czas na dwuklik aby obudzic radio       
+  Serial.print("debug Power IR -> bit_count:");
+  Serial.println(bit_count);
+  Serial.print("debug Power IR -> ir_code:");
+  Serial.println(ir_code);
+  Serial.print("debug Power IR -> f_powerOff:");
+  Serial.println(f_powerOff);
+
+  detachInterrupt(recv_pin);            // Rozpinamy przerwanie
+  Serial.print("debug Power IR -> Kod NEC OK:");
+  Serial.print(ir_code, HEX);
+  ir_code = reverse_bits(ir_code,32);   // Rotacja bitów - zmiana porządku z LSB-MSB na MSB-LSB
+  Serial.print("  MSB-LSB: ");
+  Serial.print(ir_code, HEX);
+    
+  uint8_t CMD = (ir_code >> 16) & 0xFF; // Drugi bajt (inwersja adresu)
+  uint8_t ADDR = ir_code & 0xFF;        // Czwarty bajt (inwersja komendy)
+      
+  Serial.print("  ADR:");
+  Serial.print(ADDR, HEX);
+  Serial.print(" CMD:");
+  Serial.println(CMD, HEX);
+  ir_code = ADDR << 8 | CMD;      // Łączymy ADDR i CMD w jedną zmienną 0x ADR CMD
+
+  if (bit_count == 32 && ir_code == rcCmdRed && f_powerOff) 
+  {
+    f_powerOff = false;
+    displayActive = true;
+    Serial.println("debug Power IR -> Poprawny przycisk pilota - Restart ESP");
+    u8g2.setPowerSave(0); // włącz ekran
+    u8g2.setContrast(displayBrightness); // Ustawiamy maksymalną jasnosc
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_fub14_tf);
+    u8g2.drawStr(65, 36, "POWER ON");
+    u8g2.sendBuffer();
+    //f_powerOff = false;
+    delay(1000);
+    ESP.restart();
+    //setup();
+    } else {
+    Serial.println("debug Power IR -> ZŁY przycisk pilota - SLEEP");
+    // resetujemy zmienne i wracamy do light sleep
+    bit_count = 0;
+    ir_code = 0;
+    delay(10);  
+    powerOff(); // Ponownie wchodzimy w light sleep
+  }
+}
 
 //####################################################################################### SETUP ####################################################################################### //
 
@@ -6210,6 +6378,11 @@ void setup()
   Serial.begin(115200);
   Serial.println("---------- START of Evo Web Radio -----------");
   
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+    Serial.println("debug IR -> Wybudzono z pilota IR!");
+  }
+
+
   psramData = (unsigned char *)ps_malloc(PSRAM_lenght * sizeof(unsigned char));
 
   if (psramInit()) {
@@ -6323,7 +6496,7 @@ void setup()
   readEqualizerFromSD(); // Odczytujemy ustawienia filtrów equalizera z karty SD 
   readVolumeFromSD();    // Odczytujemy nastawę ostatniego poziomu głośnosci z karty SD /EEPROMu
   readAdcConfig();       // Odczyt konfiguracji klawitury ADC
-  readRemoteConfig();    // Odczyt konfiguracji pilota IR
+  readRemoteControlConfig();    // Odczyt konfiguracji pilota IR
   assignRemoteCodes();   // Przypisanie kodów pilota IR
   
   audio.setVolumeSteps(maxVolume);
@@ -7072,7 +7245,7 @@ void setup()
       }  
     });
 
-server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) 
+    server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
       String html = String(info_html);
   
@@ -7100,7 +7273,8 @@ server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request)
       firstVisibleLine = currentSelection - 3;
     }  
     displayRadio();
-    updateTimer();
+    ActionNeedUpdateTime = true;
+    
   } 
   else 
   {
@@ -7219,6 +7393,21 @@ void loop()
           if (toneLowValue > 6) {toneLowValue = 6;}
           displayEqualizer();
         }     
+        else if (listedStations == true) // Szybkie przewijanie o 5 stacji
+        {
+          timeDisplay = false;
+          displayActive = true;
+          displayStartTime = millis();    
+          station_nr = currentSelection + 1;
+
+          station_nr = station_nr + 5;
+          for (int i = 0; i < 5; i++) {scrollDown();}
+    
+          if (station_nr > stationsCount) {station_nr = station_nr - stationsCount; } //Zbaezpiecznie aby przewijac sie tylko po stacjach w liczbie jaka jest w stationCount
+
+          displayStations();
+        }
+        
         else
         {
           station_nr++;
@@ -7251,6 +7440,27 @@ void loop()
          
           displayEqualizer();
         }     
+        else if (listedStations == true)
+        {
+          timeDisplay = false;
+          displayActive = true;
+          displayStartTime = millis();    
+          station_nr = currentSelection + 1;
+
+          station_nr = station_nr - 5;
+          
+          for (int i = 0; i < 5; i++) {scrollUp();}
+      
+          //Zbaezpiecznie aby przewijac sie tylko po stacjach w liczbie jaka jest w stationCount
+          if (station_nr > stationsCount) { station_nr = (stationsCount - (255 - station_nr)) - 1 ;} 
+          
+          // Jesli jestesmy na stacji nr 5 to aby uniknąc station_nr = 0 przewijamy do ostatniej
+          if (station_nr == 0) {station_nr = stationsCount;} 
+
+          displayStations();
+        }
+        
+        
         else
         {        
           station_nr--;
@@ -7277,11 +7487,13 @@ void loop()
         timeDisplay = false;
         displayActive = true;
         displayStartTime = millis();    
-         station_nr = currentSelection + 1;
+        station_nr = currentSelection + 1;
 
         if (listedStations == true) {station_nr--; scrollUp();} //station_nr-- tylko jesli już wyswietlany liste stacji;
         else
         {        
+          currentSelection = station_nr - 1; // Przywracamy zaznaczenie obecnie grajacej stacji
+          
           if (currentSelection >= 0)
           {
             if (currentSelection < firstVisibleLine) // jezeli obecne zaznaczenie ma wartosc mniejsza niz pierwsza wyswietlana linia
@@ -7318,6 +7530,7 @@ void loop()
           saveVolumeOnSD();
           volumeSet = false;
         }
+        
         timeDisplay = false;
         displayActive = true;
         displayStartTime = millis();     
@@ -7327,6 +7540,8 @@ void loop()
         if (listedStations == true) {station_nr++; scrollDown(); } //station_nr++ tylko jesli już wyswietlany liste stacji;
         else
         {        
+          currentSelection = station_nr - 1; // Przywracamy zaznaczenie obecnie grajacej stacji
+
           if (currentSelection >= 0)
           {
             if (currentSelection < firstVisibleLine) // jezeli obecne zaznaczenie ma wartosc mniejsza niz pierwsza wyswietlana linia
@@ -7340,7 +7555,8 @@ void loop()
             {
             firstVisibleLine = currentSelection - maxVisibleLines + 1;  // Ustaw pierwszą widoczną linię na najwyższą
             }
-          }   
+          }
+             
         }
         
         if (station_nr > stationsCount) 
@@ -7446,13 +7662,16 @@ void loop()
         //displayRadio();
         //clearFlags();
         //ActionNeedUpdateTime = true;
+        prePowerOff();
+        powerOff();
+
+      
         
-        
-        //voiceTimePlay = false;
+        //voiceTimePlay = true;
         //voiceTime();
         
-        bank_nr_max++;
-        if (bank_nr_max > 18) {bank_nr_max = 1;}
+        //bank_nr_max++;
+        //if (bank_nr_max > 99) {bank_nr_max = 1;}
         
         /*
         vuRiseNeedleSpeed++;                  
@@ -7472,9 +7691,25 @@ void loop()
         
         //debugAudioBuffor = !debugAudioBuffor;
         
-        bank_nr_max--;
-        if (bank_nr_max < 2) {bank_nr_max = 2;}
-
+        //bank_nr_max--;
+        //if (bank_nr_max < 2) {bank_nr_max = 2;}
+        /*
+        ws.closeAll();
+        audio.stopSong();
+        audio.setVolume(0);
+        u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_fub14_tf);
+        u8g2.drawStr(65, 33, "POWER OFF");
+        u8g2.sendBuffer();
+        delay(1500);
+        u8g2.setPowerSave(1);
+        */
+        
+        
+     
+     
+        //Serial.println("debug ->  Obudzony z light sleep!");
+        //if (f_powerOff) {powerOff();}
         /*
         vuFallNeedleSpeed++;
         if (vuFallNeedleSpeed > 6) {vuFallNeedleSpeed = 1;}
@@ -7586,7 +7821,7 @@ void loop()
         stationStringFormatting(); // Formatujemy StationString do wyswietlenia przez Scroller
       } 
 
-        if ((f_audioInfoRefreshDisplayRadio == true) && (displayActive == false)) // Zmiana bitrate - wymaga odswiezenia na wyswietlaczu
+      if ((f_audioInfoRefreshDisplayRadio == true) && (displayActive == false)) //&& (voiceTimePlay == false) Zmiana bitrate - wymaga odswiezenia na wyswietlaczu
       { 
         f_audioInfoRefreshDisplayRadio = false;
         ActionNeedUpdateTime = true;
