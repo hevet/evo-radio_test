@@ -1,9 +1,19 @@
-// ############################################################################################### //
-// EVO Web Radio  - Interent Radio Player                                                          //
-// ############################################################################################### //
-// Robgold 2025                                                                                    //
-// Source -> https://github.com/dzikakuna/ESP32_radio_evo3/tree/main/src/ESP32_radio_evo3.19       //
-// ############################################################################################### //
+// ################################################################################################################### //
+// Evo Internet Radio                                                                                                  //
+// ################################################################################################################### //
+// Robgold 2025                                                                                                        //
+// Source -> https://github.com/dzikakuna/ESP32_radio_evo3/tree/main/src/ESP32_radio_evo3.19                           //
+// ################################################################################################################### //
+//                                                                                                                     //
+// Compilator: Arduino, Platformio                                                                                     //
+// Espressif ESPcore32-s3:                      3.2.0 (works on newer but without modified libs for FLAC files)        //
+// ESP32-audioI2S-master by schreibfaul1:       3.4.3 with commits 1.12.2025                                           //
+// ESP Async WebServer:                         3.9.1                                                                  //
+// Async TCP:                                   3.4.9                                                                  // 
+// ezButton:                                    1.0.6                                                                  //
+// U8g2 by Oliver Olikraus:                     2.35.30                                                                //
+// WiFiManager by tzapu                         2.0.17                                                                 //
+// ################################################################################################################### //
 
 #include "Arduino.h"           // Standardowy nagłówek Arduino, który dostarcza podstawowe funkcje i definicje
 #include <WiFiManager.h>       // Biblioteka do zarządzania konfiguracją sieci WiFi, opis jak ustawić połączenie WiFi przy pierwszym uruchomieniu jest opisany tu: https://github.com/tzapu/WiFiManager
@@ -26,8 +36,10 @@
 #include <esp_sleep.h>
 #include "esp_system.h"
 
+#include "rom/gpio.h"  // Biblioteka do mapowania pinu CS_SD
+
 // Deklaracja wersji oprogramowania i nazwy hosta widocznego w routerze oraz na ekranie OLED i stronie www
-#define softwareRev "v3.19.48"  // Wersja oprogramowania radia
+#define softwareRev "v3.19.52"  // Wersja oprogramowania radia
 #define hostname "evoradio"   // Definicja nazwy hosta widoczna na zewnątrz
 
 // Definicja pinow czytnika karty SD
@@ -35,6 +47,7 @@
 #define SD_SCLK 45  // Pin SCK (Serial Clock) dla karty SD
 #define SD_MISO 21  // Pin MISO (Master In Slave Out) dla karty SD
 #define SD_MOSI 48  // pin MOSI (Master Out Slave In) dla karty SD
+
 
 //<-----TUTAJ WŁĄCZAMY KARTE SD / pamiec SPIFSS oraz drugi enkoder ------->
 #define USE_SD  //odkomentuj dla karty SD
@@ -47,21 +60,21 @@ const bool f_powerOffAnimation = 0; // Animacja przy power OFF
   #define STORAGE SD
   #define STORAGE_BEGIN() SD.begin(SD_CS, customSPI)
   const bool useSD = true;
+  //#define SD_LED 17          // LED - sygnalizacja CS, aktywność karty SD, klon pinu uzyteczny w przypadku uzywania tylnego czytnika SD na PCB
 #else
   #include "SPIFFS.h"
   #define STORAGE SPIFFS
   #define STORAGE_BEGIN() SPIFFS.begin(true)
   const bool useSD = false;
 #endif
-
-
+ 
 // Definicja pinow dla wyswietlacza OLED 
 #define SPI_MOSI_OLED 39  // Pin MOSI (Master Out Slave In) dla interfejsu SPI OLED
 #define SPI_MISO_OLED 0   // Pin MISO (Master In Slave Out) brak dla wyswietlacza OLED
 #define SPI_SCK_OLED 38   // Pin SCK (Serial Clock) dla interfejsu SPI OLED
 #define CS_OLED 42        // Pin CS (Chip Select) dla interfejsu OLED
 #define DC_OLED 40        // Pin DC (Data/Command) dla interfejsu OLED
-#define RESET_OLED 41//-1 //41     // Pin Reset dla interfejsu OLED
+#define RESET_OLED -1 //41//-1 //41     // Pin Reset dla interfejsu OLED
 
 // Rozmiar wysweitlacz OLED (potrzebny do wyświetlania grafiki)
 #define SCREEN_WIDTH 256        // Szerokość ekranu w pikselach
@@ -99,7 +112,7 @@ const bool f_powerOffAnimation = 0; // Animacja przy power OFF
 #define recv_pin 15
 
 // Przycisk Power
-#define SW_POWER 1
+#define SW_POWER 17
 #define STANDBY_LED 16
 
 //#define f_displayPowerOffClock 1   // Przeniesione do ustawien na karte SD
@@ -170,6 +183,9 @@ uint16_t rcCmdKey9 = 0;       // Przycisk "9"
 uint16_t rcCmdPower = 0;       // Przycisk Power
 // Koniec definicji pilota IR
 
+bool  f_callInfo = 0;       // Info
+
+
 
 int currentSelection = 0;                     // Numer aktualnego wyboru na ekranie OLED
 int firstVisibleLine = 0;                     // Numer pierwszej widocznej linii na ekranie OLED
@@ -195,6 +211,7 @@ int maxVisibleLines = 4;                      // Maksymalna liczba widocznych li
 int bitrateStringInt = 0;                     // Deklaracja zmiennej do konwersji Bitrate string na wartosc Int aby podzelic bitrate przez 1000
 int SampleRate = 0;
 int SampleRateRest = 0;
+int audioBufferTime = 0;                      // Zienna trzymajca informacje o ilosci sekund muzyki w buforze audio
 
 uint8_t stationNameLenghtCut = 24;            // 24-> 25 znakow, 25-> 26 znaków, zmienna określająca jak długa nazwę ma nazwa stacji w plikach Bankow liczone od 0- wartosci ustalonej
 const uint8_t yPositionDisplayScrollerMode0 = 33;   // Wysokosc (y) wyswietlania przewijanego/stalego tekstu stacji w danym trybie
@@ -249,13 +266,14 @@ uint8_t rcInputDigit2 = 0xFF;      // Druga cyfra w przy wprowadzaniu numeru sta
 
 
 // ---- Zmienne konfiguracji ---- //
-uint16_t configArray[22] = { 0 };
+uint16_t configArray[23] = { 0 };
 uint8_t rcPage = 0;
 uint16_t configRemoteArray[30] = { 0 };   // Tablica przechowująca kody pilota podczas odczytu z pliku
 uint16_t configAdcArray[20] = { 0 };      // Tablica przechowująca wartosci ADC dla przyciskow klawiatury
 bool configExist = true;                  // Flaga okreslajaca czy istnieje plik konfiguracji
 bool f_displayPowerOffClock = false;       // Flaga okreslajaca czy w trybie sleep ma się wyswietlac zegar
 bool f_sleepAfterPowerFail = false;       // Flaga czy idziemy do powerOFF po powrocie zasilania
+bool f_saveVolumeStationAlways = false;   // Flaga określająca czy zapisujemy stacje, bank i poziom volume zawsze czy tylko przy power OFF
 
 //const int maxVisibleLines = 5;  // Maksymalna liczba widocznych linii na ekranie OLED
 bool encoderButton2 = false;      // Flaga określająca, czy przycisk enkodera 2 został wciśnięty
@@ -377,6 +395,8 @@ String bitsPerSampleString;          // Zmienna przechowująca informację o lic
 String currentIP;
 String stationNameStream;           // Nazwa stacji wyciągnieta z danych wysylanych przez stream
 String streamCodec;
+String stationLogoUrl;
+String timezone;
 
 
 String header;                      // Zmienna dla serwera www
@@ -605,7 +625,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     websocket.onerror = function (error) 
     {
       console.error("Blad WebSocket: ", error);
-      //websocket.close(); // zamyka połączenie, by wywołać reconnect
+      websocket.close(); // zamyka połączenie, by wywołać reconnect
     };
     
     websocket.onmessage = function(event) 
@@ -681,14 +701,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (event.data.startsWith("mute:")) 
       {
         var muteInd = parseInt(event.data.split(":")[1]);
-        if (muteInd === 1) 
-        { 
-          document.getElementById('muteIndicator').innerText = 'MUTED';
-        } 
-        else 
-        {
-          document.getElementById('muteIndicator').innerText = '';
-        }
+        document.getElementById('muteIndicator').textContent = (muteInd === 1) ? 'MUTED' : '';       
       }
 
     }
@@ -879,6 +892,8 @@ const char config_html[] PROGMEM = R"rawliteral(
   <tr><td>Station Name Read From Stream [On-From Stream, Off-From Bank] EXPERIMENTAL</td><td><input type="checkbox" name="stationNameFromStream" value="1" %S17_checked></td></tr>
   <tr><td>Radio switch to Standby After Power Fail, default:On</td><td><input type="checkbox" name="f_sleepAfterPowerFail" value="1" %S21_checked></td></tr>
   <tr><td>Volume Fade on Station Change and Power Off, default:Off</td><td><input type="checkbox" name="f_volumeFadeOn" value="1" %S22_checked></td></tr>
+  <tr><td>Save ALWAYS Station No., Bank No., Volume, default:Off</td><td><input type="checkbox" name="f_saveVolumeStationAlways" value="1" %S23_checked></td></tr>
+  <tr><td>Timezone settings</td><td><button type="button" class="button" onclick="location.href='/timezone'">Set</button></td></tr>
 
   <tr><th><b>VU Meter Settings</b></th></tr>
   <tr><td>VU Meter Mode (0-1), 0-dashed lines, 1-continuous lines</td><td><input type="number" name="vuMeterMode" min="0" max="1" value="%D4"></td></tr>
@@ -918,6 +933,9 @@ const char adc_html[] PROGMEM = R"rawliteral(
       a {color: black; text-decoration: none;}
       body {max-width: 1380px; margin:0 auto; padding-bottom: 15px;}
       .tableSettings {border: 2px solid #4CAF50; border-collapse: collapse; margin: 10px auto; width: 40%;}
+      .button { background-color: #4CAF50; border: 1; color: white; padding: 10px 20px; border-radius: 5px; width:200px;}
+      .button:hover {background-color: #4a4a4a;}
+      .button:active {background-color: #4a4a4a; box-shadow: 0 4px #666; transform: translateY(2px);}
     </style>
     </head>
 
@@ -1003,6 +1021,7 @@ const char menu_html[] PROGMEM = R"rawliteral(
   <br><button class="button" onclick="location.href='/list'">SD / SPIFFS Explorer</button><br>
   <br><button class="button" onclick="location.href='/editor'">Memory Bank Editor</button><br>
   <br><button class="button" onclick="location.href='/browser'">Radio Browser API</button><br>
+  <br><button class="button" onclick="location.href='/playurl'">Play from URL</button><br>
   <br><button class="button" onclick="location.href='/config'">Settings</button><br>
   <br><p style='font-size: 0.8rem;'><a href="#" onclick="window.location.replace('/')">Go Back</a></p>
   </body></html>
@@ -1095,6 +1114,448 @@ const char info_html[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+const char urlplay_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE HTML>
+  <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Evo Web Radio</title>
+
+      <style>
+          html {font-family: Arial; text-align: center;}
+          body {max-width: 1380px; margin: 0 auto; background: #D0D0D0; padding-bottom: 25px;}
+          h2 {font-size: 1.3rem;}
+          p {font-size: 0.95rem;}
+          .slider{-webkit-appearance:none;margin:14px;width:330px;height:10px;background:#4CAF50;outline:none;-webkit-transition:.2s;transition:opacity .2s;border-radius:5px}
+          .slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:35px;height:25px;background:#4a4a4a;cursor:pointer;border-radius:5px}
+          .slider::-moz-range-thumb{width:35px;height:35px;background:#4a4a4a;cursor:pointer;border-radius:5px}
+          .button {background-color:#4CAF50;border:1; color:white; padding:10px 20px; border-radius:5px;cursor:pointer;}
+          .button:hover {background-color:#4a4a4a;}
+          .button.active {background-color: #115522; transform: scale(1.05); transition: all 0.15s ease;}
+          #urlInput {width:350px; padding:5px; border-radius:5px; font-size:0.9rem;}
+          #playBtn {padding:5px 10px; font-size:0.9rem;}
+          #display {display:inline-block; padding:5px; border:2px solid #4CAF50; border-radius:15px; background-color:#4a4a4a; font-size:1.45rem; color:#AAA; width:345px; text-align:center; white-space:nowrap; box-shadow:0 0 20px #4CAF50;}
+          #stationTextDiv {display:block; text-overflow:ellipsis; white-space:normal; font-size:1.0rem; color:#999; margin-bottom:10px; text-align:center; height:4.2em; overflow:hidden; line-height:1.4em;}
+          #muteIndicatorDiv {text-align:center; color:#4CAF50; font-weight:bold; font-size:1.0rem; height:1.4em;}
+          #urlInput.flash {background-color: #4CAF50;color: #fff; transition: background-color 0.3s ease;}
+      </style>
+  </head>
+
+  <body>
+  <h2>Evo Web Radio - URL Play</h2>
+
+  <div id="display" onclick="flashBackground(); displayMode();">
+      <div style="margin-bottom:10px; font-weight:bold; overflow:hidden; text-overflow:ellipsis;">
+          <span id="textStationName"><b>STATIONNAME</b></span>
+      </div>
+
+      <div style="width:345px; margin-bottom:10px;">
+          <div id="stationTextDiv">
+              <span id="stationText">STATIONTEXT</span>
+          </div>
+          <div id="muteIndicatorDiv">
+              <span id="muteIndicator"></span>
+          </div>
+      </div>
+
+      <div style="height:1px; background-color:#4CAF50; margin:5px 0;"></div>
+
+      <div style="display:flex; justify-content:center; gap:25px; font-size:1.0rem; color:#999;">
+          <div><span id="bankValue">Bank: --</span></div>
+          <div style="display:flex; gap:10px; font-size:0.65rem; color:#999;margin:3px 0;">
+              <div><span id="samplerate">---.-kHz</span></div>
+              <div><span id="bitrate">---kbps</span></div>
+              <div><span id="bitpersample">---bit</span></div>
+              <div><span id="streamformat">----</span></div>
+          </div>
+          <div><span id="stationNumber">Station: --</span></div>
+      </div>
+  </div>
+
+  <br><br>
+
+  <!-- URL + PLAY -->
+  <p><input id="urlInput" type="text" placeholder="Put your URL here"></p>
+  <p><button id="playBtn" class="button" onclick="playStream()">PLAY</button></p>
+
+  <br>
+
+  <!-- Volume -->
+  <p>Volume: <span id="textSliderValue">--</span></p>
+  <p><input type="range" onchange="updateSliderVolume()" id="volumeSlider" min="1" max="21" value="1" step="1" class="slider"></p>
+
+  <p style='font-size: 0.8rem;'><a href="#" onclick="window.location.replace('/menu')">Go Back</a></p>
+
+  <script>
+  var websocket;
+
+  function connectWebSocket() {
+      websocket = new WebSocket('ws://' + window.location.hostname + '/ws');
+
+      websocket.onopen = function() {
+          console.log("WebSocket połączony");
+      };
+
+      websocket.onclose = function() {
+          console.log("WebSocket zamknięty, reconnect za 3s...");
+          setTimeout(connectWebSocket, 3000);
+      };
+
+      websocket.onerror = function(err) {
+          console.error("Błąd WebSocket:", err);
+          websocket.close();
+      };
+
+      websocket.onmessage = function(event) {
+          const data = event.data;
+
+          if (data.startsWith("volume:")) {
+              const vol = parseInt(data.split(":")[1]);
+              document.getElementById("volumeSlider").value = vol;
+              document.getElementById("textSliderValue").innerText = vol;
+          }
+
+          if (data.startsWith("stationname:")) {
+              const value = data.split(":")[1];
+              document.getElementById("textStationName").innerHTML = "<b>" + value + "</b>";
+          }
+
+          if (data.startsWith("stationtext$")) {
+              const text = data.substring(data.indexOf("$") + 1);
+              document.getElementById("stationText").textContent = text;
+          }
+
+          if (data.startsWith("station:")) {
+              const station = parseInt(data.split(":")[1]);
+              document.getElementById("stationNumber").innerText = "Station: " + station;
+          }
+
+          if (data.startsWith("bank:")) {
+              const bank = parseInt(data.split(":")[1]);
+              document.getElementById("bankValue").innerText = "Bank: " + bank;
+          }
+
+          if (data.startsWith("samplerate:")) {
+              const rate = parseInt(data.split(":")[1]);
+              document.getElementById("samplerate").innerText = (rate / 1000).toFixed(1) + "kHz";
+          }
+
+          if (data.startsWith("bitrate:")) {
+              document.getElementById("bitrate").innerText = data.split(":")[1] + "kbps";
+          }
+
+          if (data.startsWith("bitpersample:")) {
+              document.getElementById("bitpersample").innerText = data.split(":")[1] + "bit";
+          }
+
+          if (data.startsWith("streamformat:")) {
+              document.getElementById("streamformat").innerText = data.split(":")[1];
+          }
+
+          if (data.startsWith("mute:")) {
+              const mute = parseInt(data.split(":")[1]);
+              document.getElementById("muteIndicator").innerText = mute === 1 ? "MUTED" : "";
+          }
+      };
+  }
+
+  function updateSliderVolume() {
+      const slider = document.getElementById("volumeSlider");
+      const value = slider.value;
+      document.getElementById("textSliderValue").innerText = value;
+
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send("volume:" + value);
+      }
+  }
+
+  function playStream() {
+      const urlInput = document.getElementById("urlInput");
+      const url = urlInput.value.trim();
+      const host = window.location.hostname;
+
+      urlInput.classList.add("flash");
+      setTimeout(() => urlInput.classList.remove("flash"), 300);
+
+      if (!url) return;
+
+      fetch("http://" + host + "/update?url=" + encodeURIComponent(url))
+          .catch(err => console.error("Błąd połączenia:", err));
+  }
+
+  function flashBackground() {
+      const div = document.getElementById("display");
+      const text = document.getElementById("textStationName");
+      const origColor = div.style.backgroundColor;
+      const origText = text.innerHTML;
+
+      div.style.backgroundColor = "#115522";
+      text.innerHTML = "<b>Display Mode Changed</b>";
+
+      setTimeout(() => {
+          div.style.backgroundColor = origColor;
+          text.innerHTML = origText;
+      }, 150);
+  }
+
+  function displayMode() {
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send("displayMode");
+      }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+      connectWebSocket();
+  });
+  </script>
+  </body>
+</html>
+)rawliteral";
+
+const char timezone_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE html>
+  <html>
+  <head>
+  <meta charset="UTF-8">
+  <title>Timezone Settings</title>
+  <style>
+  body { font-family: Arial; background: #D0D0D0; text-align: center; padding: 20px; }
+  .tzField { width: 380px; padding: 8px; border-radius: 6px; border: 2px solid #4CAF50; font-size: 1rem; margin-bottom: 10px; text-align: left; }
+  input#tzCustom { width: 380px; display: block; margin: 10px auto; text-align: center; }
+  button { padding: 10px 20px; background: #4CAF50; color: white; border: 1; border-radius: 6px; cursor: pointer; font-size: 1rem; }
+  button:hover { background: #3e8e41;}
+  #msg { margin-top: 15px; font-weight: bold; }
+  </style>
+  </head>
+  <body>
+
+  <h2>Evo Web Radio - Timezone Set</h2>
+  <p>Current timezone:
+  <b id="currentTZ">Loading...</b></p>
+
+  <p>Select timezone from list</p>
+
+  <select id="tzSelect" class="tzField" onchange="selectChanged()">
+      <option value="custom">Custom...</option>
+
+      <!-- Europe -->
+      <optgroup label="Europe">
+          <option value="UTC0">UTC / GMT - UTC0</option>
+          <option value="GMT0BST,M3.5.0/1,M10.5.0/2">United Kingdom - GMT0BST,M3.5.0/1,M10.5.0/2</option>
+          <option value="CET-1CEST,M3.5.0/2,M10.5.0/3">Central Europe - CET-1CEST,M3.5.0/2,M10.5.0/3</option>
+          <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Eastern Europe - EET-2EEST,M3.5.0/3,M10.5.0/4</option>
+          <option value="GMT-1">Azores - GMT-1</option>
+          <option value="WET0WEST,M3.5.0/1,M10.5.0/2">Portugal - WET0WEST,M3.5.0/1,M10.5.0/2</option>
+          <option value="MSK-3">Moscow - MSK-3</option>
+      </optgroup>
+
+      <!-- North America -->
+      <optgroup label="North America">
+          <option value="EST5EDT,M3.2.0/2,M11.1.0/2">US Eastern - EST5EDT,M3.2.0/2,M11.1.0/2</option>
+          <option value="CST6CDT,M3.2.0/2,M11.1.0/2">US Central - CST6CDT,M3.2.0/2,M11.1.0/2</option>
+          <option value="MST7MDT,M3.2.0/2,M11.1.0/2">US Mountain - MST7MDT,M3.2.0/2,M11.1.0/2</option>
+          <option value="PST8PDT,M3.2.0/2,M11.1.0/2">US Pacific - PST8PDT,M3.2.0/2,M11.1.0/2</option>
+          <option value="AKST9AKDT,M3.2.0/2,M11.1.0/2">Alaska - AKST9AKDT,M3.2.0/2,M11.1.0/2</option>
+          <option value="HST10">Hawaii - HST10</option>
+      </optgroup>
+
+      <!-- South America -->
+      <optgroup label="South America">
+          <option value="ART-3">Argentina - ART-3</option>
+          <option value="BRT-3">Brazil - BRT-3</option>
+          <option value="CLT-4CLST,M9.1.0/0,M4.1.0/0">Chile - CLT-4CLST,M9.1.0/0,M4.1.0/0</option>
+      </optgroup>
+
+      <!-- Asia -->
+      <optgroup label="Asia">
+          <option value="IST-5.5">India - IST-5.5</option>
+          <option value="CST-8">China - CST-8</option>
+          <option value="JST-9">Japan - JST-9</option>
+          <option value="KST-9">Korea - KST-9</option>
+          <option value="SGT-8">Singapore - SGT-8</option>
+          <option value="WIB-7">Indonesia (WIB) - WIB-7</option>
+          <option value="ICT-7">Thailand - ICT-7</option>
+      </optgroup>
+
+      <!-- Australia / Oceania -->
+      <optgroup label="Australia">
+          <option value="AEST-10AEDT,M10.1.0/2,M4.1.0/3">Australia Eastern - AEST-10AEDT,M10.1.0/2,M4.1.0/3</option>
+          <option value="ACST-9.5ACDT,M10.1.0/2,M4.1.0/3">Australia Central - ACST-9.5ACDT,M10.1.0/2,M4.1.0/3</option>
+          <option value="AWST-8">Australia Western - AWST-8</option>
+      </optgroup>
+
+      <!-- Africa -->
+      <optgroup label="Africa">
+          <option value="CAT-2">Central Africa - CAT-2</option>
+          <option value="EAT-3">East Africa - EAT-3</option>
+          <option value="WAT-1">West Africa - WAT-1</option>
+          <option value="SAST-2">South Africa - SAST-2</option>
+      </optgroup>
+  </select>
+
+  <input id="tzCustom" class="tzField" type="text" placeholder="Enter custom Timezone string..." readonly>
+
+  <p id="msg"></p>
+  <br>
+  <button onclick="saveTZ()">Save</button>
+
+  <p style="font-size: 0.8rem;"><a href="/menu">Go Back</a></p>
+
+  <script>
+  function loadTZ() {
+      fetch("/getTZ").then(r => r.text()).then(tz => {
+          document.getElementById("currentTZ").textContent = tz;
+          let select = document.getElementById("tzSelect");
+          let input = document.getElementById("tzCustom");
+          let found = false;
+
+          for (let i = 0; i < select.options.length; i++) {
+              if (select.options[i].value === tz) {
+                  select.selectedIndex = i;
+                  input.value = tz;
+                  input.readOnly = true;
+                  input.style.display = "block";
+                  found = true;
+                  break;
+              }
+          }
+
+          if (!found) {
+              select.value = "custom";
+              input.value = tz;
+              input.readOnly = false;
+              input.style.display = "block";
+          }
+      });
+  }
+
+  function selectChanged() {
+      let select = document.getElementById("tzSelect");
+      let input = document.getElementById("tzCustom");
+
+      if (select.value === "custom") {
+          input.readOnly = false;
+          input.value = "";
+          input.style.display = "block";
+      } else {
+          input.value = select.value;
+          input.readOnly = true;
+          input.style.display = "block";
+      }
+  }
+
+  function saveTZ() {
+      let input = document.getElementById("tzCustom");
+      let tzToSave = input.value.trim();
+
+      if (!tzToSave) {
+          document.getElementById("msg").style.color = "red";
+          document.getElementById("msg").textContent = "Please enter a timezone!";
+          return;
+      }
+
+      fetch("/setTZ?value=" + encodeURIComponent(tzToSave))
+          .then(r => r.text())
+          .then(() => {
+              document.getElementById("msg").style.color = "green";
+              document.getElementById("msg").textContent = "Timezone saved and set.";
+              loadTZ();
+          })
+          .catch(err => {
+              document.getElementById("msg").style.color = "red";
+              document.getElementById("msg").textContent = "Error: " + err;
+          });
+  }
+
+  loadTZ();
+  </script>
+
+  </body>
+  </html>
+)rawliteral";
+
+const char ota_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE html>
+  <html lang='en'>
+  <head>
+  <meta charset='UTF-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
+  <title>ESP OTA Update</title>
+  <style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f3f4f6; color: #333; padding: 40px; text-align: center; }
+  h2 { margin-bottom: 30px; color: #111; font-size: 1.3rem;}
+  #uploadSection { background-color: white; padding: 30px; border-radius: 8px; display: inline-block; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+  input[type='file'] { padding: 10px; }
+  button { margin-top: 20px; padding: 10px 20px; background-color: #4CAF50; border: none; color: white; font-size: 16px; border-radius: 5px; cursor: pointer; }
+  button:disabled { background-color: #ccc; cursor: not-allowed; }
+  progress { width: 100%; height: 20px; margin-top: 20px; border-radius: 5px; appearance: none; -webkit-appearance: none; }
+  progress::-webkit-progress-bar { background-color: #eee; border-radius: 5px; }
+  progress::-webkit-progress-value { background-color: #4CAF50; border-radius: 5px; }
+  progress::-moz-progress-bar { background-color: #4CAF50; border-radius: 5px; }
+  #status { margin-top: 15px; font-weight: bold; }
+  #fileInfo { color: #555; margin-top: 10px; }
+  </style>
+  </head>
+  <body>
+  <div id='uploadSection'>
+  <h2>Evo Web Radio - OTA Firmware Update</h2>
+  <input type='file' id='fileInput' name='update' /><br />
+  <div id='fileInfo'>No file selected</div>
+  <button id='uploadBtn'>Upload</button>
+  <p id='status'></p>
+  </div>
+
+  <script>
+  const fileInput = document.getElementById('fileInput');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const status = document.getElementById('status');
+  const fileInfo = document.getElementById('fileInfo');
+
+  fileInput.addEventListener('change', function () {
+    const file = this.files[0];
+    if (file) {
+      fileInfo.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+    } else {
+      fileInfo.textContent = 'No file selected';
+    }
+  });
+
+  uploadBtn.addEventListener('click', function () {
+    const file = fileInput.files[0];
+    if (!file) { alert('Please select a file first.'); return; }
+    uploadBtn.disabled = true;
+    status.textContent = 'Uploading...';
+
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append('update', file);
+
+    xhr.open('POST', '/firmwareota', true);
+
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        status.textContent = '✅ Upload completed, reboot in 3 sec.';
+        setTimeout(() => { window.location.href = '/'; }, 10000);
+      } else {
+        status.textContent = '❌ Upload failed.';
+      }
+      uploadBtn.disabled = false;
+    };
+
+    xhr.onerror = function () {
+      status.textContent = '❌ Network error.';
+      uploadBtn.disabled = false;
+    };
+
+    xhr.send(formData);
+  });
+  </script>
+
+  </body>
+  </html>
+)rawliteral";
+
+
 
 char stations[MAX_STATIONS][STATION_NAME_LENGTH + 1];  // Tablica przechowująca linki do stacji radiowych (jedna na stację) +1 dla terminatora null
 
@@ -1103,6 +1564,8 @@ const char *ntpServer2 = "time.nist.gov"; // Adres serwera NTP używany do synch
 //const long gmtOffset_sec = 3600;          // Przesunięcie czasu UTC w sekundach
 //const int daylightOffset_sec = 3600;      // Przesunięcie czasu letniego w sekundach, dla Polski to 1 godzina
 
+const int LOGO_SIZE = (SCREEN_WIDTH * SCREEN_HEIGHT) / 8;
+uint8_t logo_bits[LOGO_SIZE];
 
 const uint8_t spleen6x12PL[2958] U8G2_FONT_SECTION("spleen6x12PL") =
   "\340\1\3\2\3\4\1\3\4\6\14\0\375\10\376\11\377\1\225\3]\13q \7\346\361\363\237\0!\12"
@@ -1345,6 +1808,310 @@ static unsigned char notes[] PROGMEM = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
+
+#define diora_width 256
+#define diora_height 62
+static unsigned char diora[] PROGMEM = {
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x80, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0,
+   0xff, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0xff,
+   0xff, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff, 0xff, 0xff, 0x1f, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x3f, 0x00, 0x00, 0xf8, 0xff, 0xff,
+   0x01, 0x00, 0xe0, 0xff, 0x00, 0x00, 0xe0, 0xff, 0x01, 0x00, 0xc0, 0xff,
+   0xff, 0xff, 0x00, 0x00, 0x00, 0xf0, 0x7f, 0x00, 0x00, 0x00, 0xfc, 0xff,
+   0xff, 0xff, 0x7f, 0x00, 0x00, 0xf8, 0xff, 0xff, 0x07, 0x00, 0xe0, 0xff,
+   0x00, 0x00, 0xf8, 0xff, 0x1f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0x03, 0x00,
+   0x00, 0xf8, 0xff, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0x00,
+   0x00, 0xfc, 0xff, 0xff, 0x3f, 0x00, 0xe0, 0xff, 0x00, 0x00, 0xfe, 0xff,
+   0x7f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0x1f, 0x00, 0x00, 0xfc, 0xff, 0x00,
+   0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0xfc, 0xff, 0xff,
+   0x7f, 0x00, 0xe0, 0xff, 0x00, 0x80, 0xff, 0xff, 0xff, 0x00, 0xe0, 0xff,
+   0xff, 0xff, 0x3f, 0x00, 0x00, 0xfc, 0xff, 0x01, 0x00, 0x80, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x03, 0x00, 0xfe, 0xff, 0xff, 0xff, 0x00, 0xf0, 0xff,
+   0x00, 0xe0, 0xff, 0xff, 0xff, 0x01, 0xe0, 0xff, 0xff, 0xff, 0x3f, 0x00,
+   0x00, 0xfe, 0xff, 0x01, 0x00, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07,
+   0x00, 0xfe, 0xff, 0xff, 0xff, 0x01, 0xf0, 0x7f, 0x00, 0xf0, 0xff, 0xff,
+   0xff, 0x03, 0xe0, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00, 0xff, 0xff, 0x01,
+   0x00, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f, 0x00, 0xfe, 0xff, 0xff,
+   0xff, 0x03, 0xf0, 0x7f, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x03, 0xe0, 0xff,
+   0xff, 0xff, 0x7f, 0x00, 0x00, 0xff, 0xff, 0x01, 0x00, 0xe0, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x0f, 0x00, 0xfe, 0xff, 0xff, 0xff, 0x03, 0xf0, 0x7f,
+   0x00, 0xfc, 0xff, 0xff, 0xff, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0xff, 0x0f, 0xc0, 0xff, 0x07, 0xf8, 0x3f, 0xc0, 0xff, 0x07, 0x80,
+   0xff, 0x0f, 0xf0, 0x7f, 0x00, 0xf8, 0x7f, 0x00, 0xf0, 0xff, 0xff, 0x01,
+   0x00, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f, 0x00, 0xff, 0x07, 0xc0,
+   0xff, 0x07, 0xf8, 0x3f, 0xc0, 0xff, 0x03, 0x00, 0xff, 0x0f, 0xf0, 0x7f,
+   0x00, 0xf8, 0x7f, 0x00, 0xf0, 0xbf, 0xff, 0x03, 0x00, 0xfc, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x7f, 0x80, 0xff, 0x07, 0x80, 0xff, 0x07, 0xf8, 0x3f,
+   0xe0, 0xff, 0x01, 0x00, 0xff, 0x0f, 0xf8, 0x3f, 0x00, 0xfc, 0x3f, 0x00,
+   0xf8, 0xbf, 0xff, 0x03, 0x00, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+   0x80, 0xff, 0x07, 0x80, 0xff, 0x07, 0xfc, 0x1f, 0xe0, 0xff, 0x00, 0x00,
+   0xff, 0x0f, 0xf8, 0x3f, 0x00, 0xfc, 0x3f, 0x00, 0xfc, 0x9f, 0xff, 0x03,
+   0x00, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x80, 0xff, 0x03, 0x80,
+   0xff, 0x07, 0xfc, 0x1f, 0xf0, 0x7f, 0x00, 0x00, 0xff, 0x0f, 0xf8, 0x3f,
+   0x00, 0xfc, 0x1f, 0x00, 0xfc, 0x8f, 0xff, 0x03, 0x00, 0xfc, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0xc0, 0xff, 0x01, 0xc0, 0xff, 0x03, 0xff, 0x0f,
+   0xf8, 0x3f, 0x00, 0x00, 0xff, 0x07, 0xfc, 0xff, 0xff, 0xff, 0x01, 0x80,
+   0xff, 0x03, 0xff, 0x07, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+   0xc0, 0xff, 0x01, 0xc0, 0xff, 0x03, 0xff, 0x0f, 0xf8, 0x3f, 0x00, 0x80,
+   0xff, 0x07, 0xfe, 0xff, 0xff, 0xff, 0x00, 0x80, 0xff, 0x03, 0xff, 0x07,
+   0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe0, 0xff, 0x01, 0xe0,
+   0xff, 0x83, 0xff, 0x07, 0xfc, 0x3f, 0x00, 0x80, 0xff, 0x07, 0xfe, 0xff,
+   0xff, 0x3f, 0x00, 0xc0, 0xff, 0x01, 0xff, 0x07, 0x00, 0xfe, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0xff, 0xe0, 0xff, 0x01, 0xe0, 0xff, 0x81, 0xff, 0x07,
+   0xfc, 0x3f, 0x00, 0x80, 0xff, 0x03, 0xfe, 0xff, 0xff, 0x07, 0x00, 0xe0,
+   0xff, 0x00, 0xff, 0x07, 0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+   0xe0, 0xff, 0x00, 0xe0, 0xff, 0x81, 0xff, 0x07, 0xfc, 0x1f, 0x00, 0xc0,
+   0xff, 0x03, 0xff, 0xff, 0xff, 0x0f, 0x00, 0xe0, 0xff, 0x00, 0xff, 0x07,
+   0x00, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xe0, 0xff, 0x00, 0xf0,
+   0xff, 0x80, 0xff, 0x03, 0xfc, 0x1f, 0x00, 0xc0, 0xff, 0x03, 0xff, 0x0f,
+   0xff, 0x1f, 0x00, 0xf0, 0x7f, 0x00, 0xff, 0x07, 0x00, 0xfe, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0xff, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0xc0, 0xff, 0x03,
+   0xfc, 0x1f, 0x00, 0xe0, 0xff, 0x01, 0xff, 0x0f, 0xfe, 0x3f, 0x00, 0xf8,
+   0x7f, 0x00, 0xff, 0x07, 0x00, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+   0xf0, 0xff, 0x00, 0xf0, 0x7f, 0xc0, 0xff, 0x03, 0xfc, 0x1f, 0x00, 0xe0,
+   0xff, 0x01, 0xff, 0x07, 0xfe, 0x7f, 0x00, 0xf8, 0x3f, 0x00, 0xff, 0x07,
+   0x00, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x7f, 0x00, 0xff,
+   0x1f, 0xe0, 0xff, 0x01, 0xfc, 0x7f, 0x00, 0xfe, 0x3f, 0x80, 0xff, 0x03,
+   0xfc, 0xff, 0x00, 0xfe, 0x07, 0x00, 0xff, 0x07, 0x00, 0xf8, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x3f, 0xf8, 0xff, 0xff, 0xff, 0x0f, 0xe0, 0xff, 0x01,
+   0xfc, 0xff, 0x81, 0xff, 0x3f, 0xc0, 0xff, 0x03, 0xf8, 0xff, 0x00, 0xff,
+   0x07, 0x00, 0xff, 0x0f, 0x00, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f,
+   0xfc, 0xff, 0xff, 0xff, 0x0f, 0xe0, 0xff, 0x00, 0xfc, 0xff, 0xff, 0xff,
+   0x1f, 0xc0, 0xff, 0x03, 0xf8, 0xff, 0x80, 0xff, 0x03, 0x00, 0xff, 0x0f,
+   0x00, 0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x1f, 0xfc, 0xff, 0xff, 0xff,
+   0x07, 0xf0, 0xff, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x0f, 0xc0, 0xff, 0x01,
+   0xf8, 0xff, 0x81, 0xff, 0x03, 0x00, 0xff, 0x0f, 0x00, 0xf0, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x1f, 0xfc, 0xff, 0xff, 0xff, 0x03, 0xf0, 0xff, 0x00,
+   0xf8, 0xff, 0xff, 0xff, 0x07, 0xe0, 0xff, 0x01, 0xf0, 0xff, 0xc1, 0xff,
+   0x01, 0x00, 0xff, 0x0f, 0x00, 0xe0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f,
+   0xfc, 0xff, 0xff, 0xff, 0x00, 0xf0, 0xff, 0x00, 0xf0, 0xff, 0xff, 0xff,
+   0x03, 0xe0, 0xff, 0x01, 0xf0, 0xff, 0xe1, 0xff, 0x00, 0x00, 0xff, 0x0f,
+   0x00, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07, 0xfe, 0xff, 0xff, 0x7f,
+   0x00, 0xf0, 0x7f, 0x00, 0xe0, 0xff, 0xff, 0xff, 0x00, 0xe0, 0xff, 0x01,
+   0xf0, 0xff, 0xe1, 0xff, 0x00, 0x00, 0xff, 0x0f, 0x00, 0xc0, 0xff, 0xff,
+   0xff, 0xff, 0xff, 0x07, 0xfe, 0xff, 0xff, 0x1f, 0x00, 0xf8, 0x7f, 0x00,
+   0xc0, 0xff, 0xff, 0x7f, 0x00, 0xe0, 0xff, 0x00, 0xf0, 0xff, 0xf3, 0x7f,
+   0x00, 0x00, 0xff, 0x0f, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03,
+   0xfe, 0xff, 0xff, 0x07, 0x00, 0xf8, 0x7f, 0x00, 0x80, 0xff, 0xff, 0x1f,
+   0x00, 0xf0, 0xff, 0x00, 0xe0, 0xff, 0xff, 0x7f, 0x00, 0x00, 0xff, 0x1f,
+   0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0xfe, 0xff, 0x7f, 0x00,
+   0x00, 0xf8, 0x7f, 0x00, 0x00, 0xfe, 0xff, 0x03, 0x00, 0xf0, 0xff, 0x00,
+   0xe0, 0xff, 0xff, 0x3f, 0x00, 0x00, 0xff, 0x1f, 0x00, 0x00, 0xfe, 0xff,
+   0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x80, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0xff, 0xff, 0xff, 0x7f, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff,
+   0xff, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0xff, 0xff, 0xff, 0x07, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc,
+   0xff, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff, 0x1f, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00 
+  };
+
+
+
+#define diora2_width 256
+#define diora2_height 46
+static unsigned char diora2[] PROGMEM = {
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0xf0, 0xff, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x3f,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0xe0, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xff, 0xff, 0xff,
+   0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x7f, 0x00, 0xc0,
+   0x7f, 0x00, 0x00, 0xf8, 0x0f, 0x00, 0x80, 0xff, 0xff, 0x3f, 0x00, 0x00,
+   0xfc, 0x1f, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff, 0x0f, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x01, 0xe0, 0x7f, 0x00, 0xc0, 0xff,
+   0xff, 0x00, 0xc0, 0xff, 0xff, 0x7f, 0x00, 0x00, 0xfe, 0x1f, 0x00, 0x00,
+   0xfc, 0xff, 0xff, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+   0xff, 0xff, 0x03, 0xe0, 0x7f, 0x00, 0xf0, 0xff, 0xff, 0x01, 0xc0, 0xff,
+   0xff, 0xff, 0x01, 0x00, 0xfe, 0x1f, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff,
+   0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x07, 0xf0,
+   0x3f, 0x00, 0xfc, 0xff, 0xff, 0x07, 0xe0, 0xff, 0xff, 0xff, 0x01, 0x00,
+   0xff, 0x1f, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x0f, 0xf0, 0x3f, 0x00, 0xff, 0xff,
+   0xff, 0x0f, 0xe0, 0xff, 0xff, 0xff, 0x03, 0x80, 0xff, 0x1f, 0x00, 0x80,
+   0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0xc0, 0xff, 0x00, 0xf0, 0x0f, 0xf0, 0x1f, 0xe0, 0x3f, 0x00,
+   0xf0, 0x1f, 0xf0, 0x1f, 0x00, 0xfe, 0x03, 0xe0, 0xcf, 0x1f, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0xff,
+   0x00, 0xf0, 0x0f, 0xf8, 0x1f, 0xf0, 0x3f, 0x00, 0xf0, 0x1f, 0xf0, 0x1f,
+   0x00, 0xfe, 0x01, 0xf0, 0xc7, 0x1f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0xff,
+   0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x7f, 0x00, 0xf0, 0x0f, 0xf8,
+   0x0f, 0xf8, 0x1f, 0x00, 0xf0, 0x1f, 0xf8, 0x0f, 0x00, 0xff, 0x01, 0xf8,
+   0xc7, 0x1f, 0x00, 0xe0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00,
+   0x00, 0x00, 0xe0, 0x7f, 0x00, 0xf8, 0x0f, 0xf8, 0x0f, 0xf8, 0x0f, 0x00,
+   0xf8, 0x1f, 0xf8, 0x0f, 0x80, 0xff, 0x00, 0xf8, 0xc3, 0x1f, 0x00, 0xe0,
+   0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x3f,
+   0x00, 0xf8, 0x07, 0xfc, 0x07, 0xfc, 0x07, 0x00, 0xf8, 0x0f, 0xfc, 0x07,
+   0x80, 0x7f, 0x00, 0xfc, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f,
+   0x00, 0xfc, 0x07, 0xfe, 0x03, 0xfe, 0x03, 0x00, 0xfc, 0x0f, 0xfc, 0xff,
+   0xff, 0x0f, 0x00, 0xff, 0xc0, 0x3f, 0x00, 0xf0, 0xff, 0xff, 0xff, 0xff,
+   0xff, 0x07, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00, 0xfc, 0x07, 0xfe,
+   0x03, 0xfe, 0x03, 0x00, 0xfc, 0x0f, 0xfe, 0xff, 0xff, 0x07, 0x80, 0x7f,
+   0xc0, 0x3f, 0x00, 0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07, 0x00, 0x00,
+   0x00, 0x00, 0xf8, 0x1f, 0x00, 0xfe, 0x03, 0xfe, 0x03, 0xfe, 0x03, 0x00,
+   0xfe, 0x07, 0xfe, 0xff, 0x7f, 0x00, 0xc0, 0x3f, 0xc0, 0x3f, 0x00, 0xf0,
+   0xff, 0xff, 0xff, 0xff, 0xff, 0x07, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x1f,
+   0x00, 0xfe, 0x03, 0xff, 0x01, 0xfe, 0x01, 0x00, 0xfe, 0x07, 0xfe, 0xe7,
+   0xff, 0x00, 0xe0, 0x3f, 0xc0, 0x3f, 0x00, 0xf0, 0xff, 0xff, 0xff, 0xff,
+   0xff, 0x07, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x1f, 0x00, 0xff, 0x01, 0xff,
+   0x01, 0xff, 0x01, 0x00, 0xff, 0x03, 0xff, 0x83, 0xff, 0x03, 0xe0, 0x1f,
+   0xc0, 0x3f, 0x00, 0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0x07, 0x00, 0x00,
+   0x00, 0x00, 0xf8, 0x0f, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff, 0x01, 0x00,
+   0xff, 0x01, 0xff, 0x01, 0xff, 0x07, 0xf0, 0x0f, 0x00, 0x00, 0x00, 0xe0,
+   0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0xfc, 0x0f, 0xc0, 0x3f, 0x80, 0xff, 0x00, 0xfe, 0x03, 0xc0,
+   0xff, 0x00, 0xff, 0x01, 0xfe, 0x07, 0xfc, 0x03, 0xc0, 0x7f, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0x0f,
+   0xf0, 0x3f, 0x80, 0xff, 0x00, 0xfe, 0x1f, 0xf0, 0x7f, 0x80, 0xff, 0x01,
+   0xfe, 0x0f, 0xfe, 0x03, 0xc0, 0x7f, 0x00, 0xc0, 0xff, 0xff, 0xff, 0xff,
+   0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xff, 0x0f, 0xc0, 0x7f,
+   0x00, 0xfe, 0xff, 0xff, 0x3f, 0x80, 0xff, 0x00, 0xfe, 0x0f, 0xfe, 0x01,
+   0xc0, 0x7f, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00,
+   0x00, 0x00, 0xfe, 0xff, 0xff, 0x0f, 0xc0, 0x7f, 0x00, 0xfc, 0xff, 0xff,
+   0x0f, 0xc0, 0xff, 0x00, 0xfc, 0x0f, 0xff, 0x00, 0xc0, 0x7f, 0x00, 0x80,
+   0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
+   0xff, 0x07, 0xc0, 0x7f, 0x00, 0xfc, 0xff, 0xff, 0x07, 0xc0, 0xff, 0x00,
+   0xfc, 0x9f, 0xff, 0x00, 0xc0, 0x7f, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+   0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0x01, 0xe0, 0x3f,
+   0x00, 0xf8, 0xff, 0xff, 0x03, 0xe0, 0x7f, 0x00, 0xfc, 0xdf, 0x7f, 0x00,
+   0xc0, 0x7f, 0x00, 0x00, 0xfe, 0xff, 0xff, 0xff, 0x3f, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0xff, 0xff, 0x3f, 0x00, 0xe0, 0x3f, 0x00, 0xe0, 0xff, 0xff,
+   0x00, 0xe0, 0x7f, 0x00, 0xf8, 0xff, 0x3f, 0x00, 0xc0, 0x7f, 0x00, 0x00,
+   0xfc, 0xff, 0xff, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x0f, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0xff, 0xff, 0xff,
+   0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0xf0, 0xff, 0xff, 0xff, 0x07, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0xc0, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x7f,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0xff, 0x1f, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0xc0, 0xff, 0x01, 0x00, 0x00, 0x00, 0x00
+  };
+
+
+
 
 // Funkcja odwracania bitów MSL-LSB <-> LSB-MSB
 uint32_t reverse_bits(uint32_t inval, int bits)
@@ -2130,6 +2897,33 @@ void stationStringFormatting()
     //Serial.print(stationStringScroll);
     //Serial.println("@");
   }
+  else if (displayMode == 4) // Tryb wświetlania mode 4 formater dla potrzeb Web
+  {
+    if (stationString == "") // Jeżeli stationString jest pusty i stacja go nie nadaje to podmieniamy pusty stationString na nazwę staji - stationNameStream
+    {    
+      if (stationNameStream == "") // jezeli nie ma równiez stationName to wstawiamy 3 kreseczki
+      { 
+        stationStringScroll = "---" ;
+        stationStringWeb = "---" ;
+      } 
+      else // jezeli jest station name to oprawiamy w "-- NAZWA --" i wysylamy do scrollera
+      { 
+        stationStringScroll = ("-- " + stationNameStream + " --");
+        stationStringWeb = ("-- " + stationNameStream + " --");
+      }  // Zmienna stationStringScroller przyjmuje wartość stationNameStream
+    }
+    else // Jezeli stationString zawiera dane to przypisujemy go do stationStringScroll do funkcji scrollera
+    {
+      stationStringWeb = stationString;
+      processText(stationString);  // przetwarzamy polsie znaki
+      stationStringScroll = "  " + stationString + "  " ; // Nie dodajemy separator do tekstu aby wyswietlał się rowno na srodku
+    }             
+    //Liczymy długość napisu stationStringScroll 
+    stationStringScrollWidth = stationStringScroll.length() * 6;
+    //Serial.print("debug -> Display Mode-3 stationStringScroll:@");
+    //Serial.print(stationStringScroll);
+    //Serial.println("@");
+  }
   
 }
 
@@ -2353,7 +3147,9 @@ void displayRadio()
     u8g2.clearBuffer();
     u8g2.setFont(spleen6x12PL);
   }
+    
 }
+
 
 // Obsługa callbacka info o audio dla bibliteki 3.4.1 i nowszej.
 void my_audio_info(Audio::msg_t m)
@@ -2544,7 +3340,15 @@ void my_audio_info(Audio::msg_t m)
     }
     break;
     
-    case Audio::evt_icylogo:        Serial.printf("icy logo: ... %s\n", m.msg); break;
+    case Audio::evt_icylogo:        
+    {
+      stationLogoUrl = String(m.msg);
+      stationLogoUrl.trim();
+      Serial.println("info: ....... stationLogoUrl: " + stationLogoUrl);
+      Serial.printf("icy logo: ... %s\n", m.msg); 
+    }
+    break;
+    
     case Audio::evt_icydescription: Serial.printf("icy descr: .. %s\n", m.msg); break;
     case Audio::evt_image: for(int i = 0; i < m.vec.size(); i += 2) { Serial.printf("cover image:  segment %02i, pos %07lu, len %05lu\n", i / 2, m.vec[i], m.vec[i + 1]);} break; // APIC
     case Audio::evt_lyrics:         Serial.printf("sync lyrics:  %s\n", m.msg); break;
@@ -2572,6 +3376,7 @@ void encoderFunctionOrderChange()
 
 void bankMenuDisplay()
 {
+  if (bank_nr < 1) {bank_nr = 1;}
   const uint8_t cornerRadius = 3;
   float segmentWidth = (float)212 / bank_nr_max;
 
@@ -3165,13 +3970,16 @@ void changeStation()
 
   mp3 = flac = aac = vorbis = opus = false;
   streamCodec = "";
+  //stationLogoUrl = "";
   
   if (urlPlaying) { bank_nr = previous_bank_nr;} // Przywracamy ostatni numer banku po graniu z ULR gdzie ustawilismy bank na 0
 
   // Usunięcie wszystkich znaków z obiektów 
   stationString.remove(0);  
   stationNameStream.remove(0);
-  
+  stationStringWeb.remove(0);
+  stationLogoUrl.remove(0);
+
   bitrateString.remove(0);
   sampleRateString.remove(0);
   bitsPerSampleString.remove(0); 
@@ -3258,7 +4066,7 @@ void changeStation()
     if (f_volumeFadeOn && !volumeMute) {startFadeIn(volumeValue);} else if (!volumeMute) {audio.setVolume(volumeValue);}   
     
     // Zapisujemy jaki numer stacji i który bank gramy tylko jesli sie zmieniły
-    if (station_nr != stationFromBuffer || bank_nr != previous_bank_nr) {saveStationOnSD();} 
+    if ((station_nr != stationFromBuffer || bank_nr != previous_bank_nr) && f_saveVolumeStationAlways) {saveStationOnSD();} 
     
     if (station_nr != 0 ) {stationFromBuffer = station_nr;} 
     urlPlaying = false; // Kasujemy flage odtwarzania z adresu przesłanego ze strony WWW
@@ -3442,7 +4250,7 @@ void updateTime()
         snprintf(timeString, sizeof(timeString), ":%02d", timeinfo.tm_sec);
         u8g2.drawStr(xtime+163, 45, timeString);
       }
-      else if (displayMode == 3 || displayMode == 5)
+      else if (displayMode == 3)// || displayMode == 5)
       { 
         if (showDots) snprintf(timeString, sizeof(timeString), "%2d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
         else snprintf(timeString, sizeof(timeString), "%2d %02d", timeinfo.tm_hour, timeinfo.tm_min);
@@ -3483,7 +4291,7 @@ void updateTime()
       }       
       if ((displayMode == 0) || (displayMode == 1) || (displayMode == 2)) { u8g2.drawStr(226, 63, timeString);}
       if (displayMode == 3) { u8g2.drawStr(226, 10, timeString);}
-      if (displayMode == 5) { u8g2.drawStr(226, 10, timeString);}
+      //if (displayMode == 5) { u8g2.drawStr(226, 10, timeString);}
     }
   }
 }
@@ -3552,7 +4360,8 @@ void saveEqualizerOnSD()
 void readEqualizerFromSD() 
 {
   // Sprawdź, czy karta SD jest dostępna
-  if (!STORAGE.begin(SD_CS)) 
+  //if (!STORAGE.begin(SD_CS))
+  if (!STORAGE_BEGIN()) 
   {
     Serial.println("debug SD -> Nie można znaleźć karty SD, ustawiam domyślne wartości filtrow Equalziera.");
     toneHiValue = 0;  // Domyślna wartość filtra gdy brak karty SD
@@ -3601,9 +4410,12 @@ void readEqualizerFromSD()
 }
 
 // Funkcja do odczytu danych stacji radiowej z karty SD
-void readStationFromSD() {
+void readStationFromSD() 
+{
   // Sprawdź, czy karta SD jest dostępna
-  if (!STORAGE.begin(SD_CS)) {
+  //if (!STORAGE.begin(SD_CS)) 
+  if (!STORAGE_BEGIN())
+  {
     //Serial.println("Nie można znaleźć karty STORAGE. Ustawiam domyślne wartości: Station=1, Bank=1.");
     Serial.println("debug SD -> Nie można znaleźć karty SD, ustawiam wartości z EEPROMu");
     //station_nr = 1;  // Domyślny numer stacji gdy brak karty SD
@@ -3655,10 +4467,130 @@ void readStationFromSD() {
   }
 }
 
+
+void vuMeterMode0new() 
+{
+    // Odczyt VU
+    uint16_t raw = audio.getVUlevel();
+    int L = (raw >> 8) & 0xFF;
+    int R = raw & 0xFF;
+
+    // ograniczenie wartości do 0–243
+    vuMeterL = constrain(L, 0, 243);
+    vuMeterR = constrain(R, 0, 243);
+
+    // zapobiega nagłym spadkom przy wysokich sygnałach
+    const int fallLimit = 8;
+    if (vuSmooth) 
+    {
+        // LEFT
+        if (vuMeterL > displayVuL) 
+        {
+            displayVuL += vuRiseSpeed;
+            if (displayVuL > vuMeterL) displayVuL = vuMeterL;
+        } 
+        else 
+        {
+            int drop = displayVuL - vuMeterL;
+            if (drop > fallLimit) drop = fallLimit;
+            displayVuL -= drop;
+        }
+
+        // RIGHT
+        if (vuMeterR > displayVuR) 
+        {
+            displayVuR += vuRiseSpeed;
+            if (displayVuR > vuMeterR) displayVuR = vuMeterR;
+        } 
+        else 
+        {
+            int drop = displayVuR - vuMeterR;
+            if (drop > fallLimit) drop = fallLimit;
+            displayVuR -= drop;
+        }
+    } 
+    else 
+    {
+        displayVuL = vuMeterL;
+        displayVuR = vuMeterR;
+    }
+
+    // Aktualizacja peak&hold
+    if (vuPeakHoldOn) 
+    {
+        // LEFT
+        if (displayVuL >= peakL) { peakL = displayVuL; peakHoldTimeL = 0; } 
+        else if (peakHoldTimeL < peakHoldThreshold) peakHoldTimeL++; 
+        else if (peakL > 0) peakL--;
+
+        // RIGHT
+        if (displayVuR >= peakR) { peakR = displayVuR; peakHoldTimeR = 0; } 
+        else if (peakHoldTimeR < peakHoldThreshold) peakHoldTimeR++; 
+        else if (peakR > 0) peakR--;
+    }
+
+    // Rysowanie na ekranie
+    if (!volumeMute) 
+    {
+        u8g2.setDrawColor(0);
+        u8g2.drawBox(7, vuLy, 256, 3);
+        u8g2.drawBox(7, vuRy, 256, 3);
+        u8g2.setDrawColor(1);
+
+        // Białe pola pod literami
+        u8g2.drawBox(0, vuLy - 3, 7, 7);
+        u8g2.drawBox(0, vuRy - 3, 7, 7);
+
+        // Litery L i R
+        u8g2.setDrawColor(0);
+        u8g2.setFont(u8g2_font_04b_03_tr);
+        u8g2.drawStr(2, vuLy + 3, "L");
+        u8g2.drawStr(2, vuRy + 3, "R");
+        u8g2.setDrawColor(1);
+
+        if (vuMeterMode == 1) // ciągłe paski
+        {
+            u8g2.drawBox(10, vuLy, displayVuL, 2);
+            u8g2.drawBox(10, vuRy, displayVuR, 2);
+            u8g2.drawBox(9 + peakL, vuLy, 1, 2);
+            u8g2.drawBox(9 + peakR, vuRy, 1, 2);
+        } 
+        else // przerwane paski
+        {
+            for (uint8_t i = 0; i < displayVuL; i++) if ((i % 9) < 8) u8g2.drawBox(9 + i, vuLy, 1, 2);
+            for (uint8_t i = 0; i < displayVuR; i++) if ((i % 9) < 8) u8g2.drawBox(9 + i, vuRy, 1, 2);
+            if (vuPeakHoldOn)
+            {
+                u8g2.drawBox(9 + peakL, vuLy, 1, 2);
+                u8g2.drawBox(9 + peakR, vuRy, 1, 2);
+            }
+        }
+    }
+}
+
+
 void vuMeterMode0() 
 {
-  vuMeterR = min(audio.getVUlevel() & 0xFF, 250);  // wyciagamy ze zmiennej typu int16 kanał L
-  vuMeterL = min(audio.getVUlevel() >> 8, 250);  // z wyzszej polowki wyciagamy kanal P
+  uint16_t raw = audio.getVUlevel();
+  vuMeterL = (raw >> 8) & 0xFF;
+  vuMeterR = raw & 0xFF;
+
+  //vuMeterL = constrain(vuMeterL, 0, 243);
+  //vuMeterR = constrain(vuMeterR, 0, 243);
+
+  // zapobiega nagłym spadkom przy bardzo silnym sygnale
+  //if (vuMeterL < displayVuL - 8) vuMeterL = displayVuL - 8;
+  //if (vuMeterR < displayVuR - 8) vuMeterR = displayVuR - 8;
+
+  
+  //vuMeterR = audio.getVUlevel() & 0xFF;  // wyciagamy ze zmiennej typu int16 kanał L
+  //vuMeterL = audio.getVUlevel() >> 8;  // z wyzszej polowki wyciagamy kanal P
+
+  //vuMeterL = constrain(vuMeterL, 0, 243);
+  //vuMeterR = constrain(vuMeterR, 0, 243);
+
+  vuMeterR = map(vuMeterR, 0, 255, 0, 243);
+  vuMeterL = map(vuMeterL, 0, 255, 0, 243);  // 244 VU + start od x=10 +  peak hold 2px
 
 
   if (vuSmooth)
@@ -3788,8 +4720,8 @@ void vuMeterMode0()
     if (vuSmooth)
     {
       u8g2.setDrawColor(0);
-      u8g2.drawBox(7, vuLy, 256, 3);  //czyszczenie ekranu pod VU meter
-      u8g2.drawBox(7, vuRy, 256, 3);
+      u8g2.drawBox(7, vuLy, 249, 3);  //czyszczenie ekranu pod VU meter
+      u8g2.drawBox(7, vuRy, 249, 3);
       u8g2.setDrawColor(1);
 
       // Biale pola pod literami L i R
@@ -4107,10 +5039,10 @@ void vuMeterMode4() // Mode4 eksperymetn z duzymi wskaznikami VU
 
 void showIP(uint16_t xip, uint16_t yip)
 {
-  u8g2.setFont(u8g2_font_04b_03_tr);
+  u8g2.setFont(spleen6x12PL);
   u8g2.setDrawColor(1);
-  u8g2.drawStr(xip, yip + 3, "IP:");
-  u8g2.drawStr(xip + 12, yip + 3, currentIP.c_str());   //wyswietlenie IP jesli VU meter jest wyłączony i nie jest właczone wyciszenie MUTE
+  u8g2.setCursor(xip,yip);
+  u8g2.print("IP: " + currentIP);
 }
 
 void displayClearUnderScroller() // Funkcja odpwoiedzialna za przewijanie informacji strem tittle lub stringstation
@@ -4139,12 +5071,13 @@ void displayClearUnderScroller() // Funkcja odpwoiedzialna za przewijanie inform
     u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(0,yPositionDisplayScrollerMode3, "                                           "); //43 spacje - czyszczenie ekranu   
   }
-    else if (displayMode == 5)  // Tryb mały tekst - Mode 3 || displayMode == 5
+  /*  else if (displayMode == 5)  // Tryb mały tekst - Mode 3 || displayMode == 5
   {
     u8g2.setDrawColor(1);
     u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(0,yPositionDisplayScrollerMode5, "                                           "); //43 spacje - czyszczenie ekranu   
   }
+  */
   u8g2.sendBuffer();  // rysujemy całą zawartosc ekranu.  
 }
 
@@ -4292,7 +5225,8 @@ void displayRadioScroller() // Funkcja odpwoiedzialna za przewijanie informacji 
       u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode3, stationStringScroll.c_str()); 
     } 
   }
-    else if (displayMode == 5)//|| displayMode == 5
+  /*
+  else if (displayMode == 5)//|| displayMode == 5
   {
    if (stationStringScroll.length() > maxStationVisibleStringScrollLength) //42 + 4 znaki spacji separatora. Realnie widzimy 42 znaki
     {    
@@ -4318,6 +5252,7 @@ void displayRadioScroller() // Funkcja odpwoiedzialna za przewijanie informacji 
       u8g2.drawStr(xPositionStationString, yPositionDisplayScrollerMode5, stationStringScroll.c_str()); 
     } 
   }
+  */
 }
 
 void handleKeyboard()
@@ -4636,11 +5571,65 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 
 void bufforAudioInfo()
 {
+  int bitRateBps = audio.getBitRate() / 1000;
+  int bytesPerSecond = 0;
+
+  if (bitRateBps > 0) { bytesPerSecond = bitRateBps / 8;}   // kB/s
+
+  int inputBufferBytes = audio.inBufferFilled() / 1000;
+
+  // zabezpieczenie przed dzieleniem przez zero i innymi błędami
+  if (bytesPerSecond > 0 && inputBufferBytes > 8) 
+  {
+    audioBufferTime = inputBufferBytes / bytesPerSecond;
+  } 
+  else 
+  {
+    audioBufferTime = 0;
+  }
+
+  
+  
   Serial.print("debug-- Audio Bufor wolne: ");
   Serial.print(audio.inBufferFree());
   Serial.print(" / ");
   Serial.print("zajęte: ");
-  Serial.println(audio.inBufferFilled());
+  Serial.print(audio.inBufferFilled());
+  
+  Serial.print("  Muzyka w buforze na: " + String(audioBufferTime) + " sek. " );
+  Serial.print("  bitrate: " );
+  Serial.print(audio.getBitRate());
+  Serial.print("  " );
+  /*
+  if (audioBufferTime >= 10) {Serial.println("##########");}
+  if (audioBufferTime >= 9) {Serial.println("#########_");}
+  if (audioBufferTime >= 8) {Serial.println("########__");}
+  if (audioBufferTime >= 7) {Serial.println("#######___");}
+  if (audioBufferTime >= 6) {Serial.println("######____");}
+  if (audioBufferTime >= 5) {Serial.println("#####_____");}
+  if (audioBufferTime == 4) {Serial.println("####______");}
+  if (audioBufferTime == 3) {Serial.println("###_______");}
+  if (audioBufferTime == 2) {Serial.println("##________");}
+  if (audioBufferTime == 1) {Serial.println("#_________");}
+  if (audioBufferTime == 0) {Serial.println("__________");}
+  */
+  
+  if (audioBufferTime < 0)  audioBufferTime = 0;
+  if (audioBufferTime > 10) audioBufferTime = 10;
+
+  /*
+  char bar[11];
+  for (int i = 0; i < 10; i++) {bar[i] = (i < audioBufferTime) ? '#' : '_'; }
+  bar[10] = '\0';
+  Serial.println(bar);
+  */
+  
+  Serial.print("[");
+  for (int i = 0; i < 10; i++) {if (i < audioBufferTime) Serial.print('#'); else Serial.print('_'); }
+  Serial.println("]");
+
+
+
 }
 
 // Funkcja obsługująca przerwanie (reakcja na zmianę stanu pinu)
@@ -4867,22 +5856,35 @@ void displayEqualizer() // Funkcja rysująca menu 3-punktowego equalizera
   u8g2.sendBuffer(); 
 }
 
+
 void displayBasicInfo()
 {
   displayStartTime = millis();  // Uaktulniamy czas dla funkcji auto-powrotu z menu
   timeDisplay = false;          // Wyłaczamy zegar
   displayActive = true;         // Wyswietlacz aktywny
+  
+  uint64_t chipid = ESP.getEfuseMac();
+
+  char buf[100];
+  snprintf(buf, sizeof(buf),
+          "ESP32 SN:%04X%08X,  FW Ver.: %s",
+          (uint16_t)(chipid >> 32),
+          (uint32_t)chipid,
+          softwareRev);
+
+String chipSN = buf;
   u8g2.clearBuffer();
   u8g2.setFont(spleen6x12PL);
   u8g2.drawStr(0, 10, "Info:");
-  u8g2.setCursor(0,25); u8g2.print("ESP32 SN:" + String(ESP.getEfuseMac()) + ",  FW Ver.:" + String(softwareRev));
+  //u8g2.setCursor(0,25); u8g2.print("ESP32 SN:" + String(ESP.getEfuseMac()) + ",  FW Ver.:" + String(softwareRev));
+  u8g2.setCursor(0,25); u8g2.print(chipSN);
   u8g2.setCursor(0,38); u8g2.print("Hostname:" + String(hostname) + ",  WiFi Signal:" + String(WiFi.RSSI()) + "dBm");
   u8g2.setCursor(0,51); u8g2.print("WiFi SSID:" + String(wifiManager.getWiFiSSID()));
   u8g2.setCursor(0,64); u8g2.print("IP:" + currentIP + "  MAC:" + String(WiFi.macAddress()) );
   
   u8g2.sendBuffer();
 }
-
+/*
 void audioProcessing(void *p)
 {
   while (true) {
@@ -4890,6 +5892,8 @@ void audioProcessing(void *p)
   vTaskDelay(1 / portTICK_PERIOD_MS); // Opóźnienie 1 milisekundy
   }
 }
+*/
+
 
 //  OTA update callback dla Wifi Managera i trybu Recovery Mode
 void handlePreOtaUpdateCallback()
@@ -5558,6 +6562,7 @@ void saveConfig()
       myFile.print("Dimmer Sleep Display Brightness =");    myFile.print(dimmerSleepDisplayBrightness); myFile.println(";");
       myFile.print("Radio switch to standby after Power Fail =");    myFile.print(f_sleepAfterPowerFail); myFile.println(";");
       myFile.println("Volume fade on station change and power off =" + String(f_volumeFadeOn) + ";");
+      myFile.println("Save Always Station Bank Volume or only during power off =" + String(f_saveVolumeStationAlways) + ";");
       
 
       myFile.close();
@@ -5600,6 +6605,7 @@ void saveConfig()
       myFile.print("Dimmer Sleep Display Brightness =");    myFile.print(dimmerSleepDisplayBrightness); myFile.println(";");
       myFile.print("Radio goes to sleep after Power Fail =");    myFile.print(f_sleepAfterPowerFail); myFile.println(";");
       myFile.println("Volume fade on station change and power off =" + String(f_volumeFadeOn) + ";");
+      myFile.println("Save Always Station Bank Volume or only during power off =" + String(f_saveVolumeStationAlways) + ";");
       myFile.close();
       Serial.println("Utworzono i zapisano config.txt na karcie SD");
     } 
@@ -5765,7 +6771,7 @@ void readConfig()
   dimmerSleepDisplayBrightness = configArray[20];
   f_sleepAfterPowerFail = configArray[21];
   f_volumeFadeOn = configArray[22];
-
+  f_saveVolumeStationAlways = configArray[23];
 
   if (maxVolumeExt == 1)
   { 
@@ -5901,9 +6907,23 @@ void readPSRAMstations()  // Funkcja testowa-debug, do odczytu PSRAMu, nie uzywa
 void webUrlStationPlay() 
 {
   audio.stopSong();
-  stationString.remove(0);  // Usunięcie wszystkich znaków z obiektu stationString
+
+  // Usunięcie wszystkich znaków z obiektów 
+  stationString.remove(0);  
   stationNameStream.remove(0);
-  
+  stationStringWeb.remove(0);
+  stationLogoUrl.remove(0);
+
+  bitrateString.remove(0);
+  sampleRateString.remove(0);
+  bitsPerSampleString.remove(0); 
+  SampleRate = 0;
+  SampleRateRest = 0;
+
+  sampleRateString = "--.-";
+  bitsPerSampleString = "--";
+  bitrateString = "-?-";
+    
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_fub14_tf); // cziocnka 14x11
   u8g2.drawStr(34, 33, "Loading stream..."); // 8 znakow  x 11 szer
@@ -6404,13 +7424,87 @@ void listFiles(String path, String &html)
 }
 
 
+void saveTimezone(String timezone) 
+{
+  if (STORAGE.exists("/timezone.txt")) 
+  {
+    Serial.println("debug SD -> Plik timezone.txt już istnieje.");
+
+    // Otwórz plik do zapisu i nadpisz aktualną wartość flitrów equalizera
+    myFile = STORAGE.open("/timezone.txt", FILE_WRITE);
+    if (myFile) 
+    {
+      myFile.println(timezone);
+      myFile.close();
+      Serial.println("debug SD -> Aktualizacja timezone.txt na karcie SD");
+    } 
+    else 
+    {
+      Serial.println("debug SD -> Błąd podczas otwierania pliku timezone.txt");
+    }
+  } 
+  else 
+  {
+    Serial.println("debug SD -> Plik timezone.txt nie istnieje. Tworzenie...");
+
+    // Utwórz plik i zapisz w nim aktualną wartość głośności
+    myFile = STORAGE.open("/timezone.txt", FILE_WRITE);
+    if (myFile) 
+    {
+      myFile.println(timezone);
+      myFile.close();
+      Serial.println("debug SD -> Utworzono i zapisano timezone.txt na karcie SD");
+    } 
+    else 
+    {
+      Serial.println("debug SD -> Błąd podczas tworzenia pliku timezone.txt");
+    }
+  }
+}
+
+void readTimezone() 
+{
+  // Sprawdzamy czy plik  istnieje
+  if (STORAGE.exists("/timezone.txt")) 
+  {
+    File myFile = STORAGE.open("/timezone.txt", FILE_READ);
+
+    // Plik istnieje, ale nie udało się go otworzyć
+    if (!myFile) 
+    {
+      timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+      Serial.println("debug SD -> Blad pliku timezone.txt, ustawiam strefe:" + timezone);
+      return;
+    }
+
+    // Plik udało się otworzyć
+    timezone = myFile.readString();
+    timezone.trim();
+    myFile.close();
+    Serial.println("debug SD -> Odczytano timezone.txt, strefa:" + timezone);
+  } 
+  else 
+  {
+    // Plik nie istnieje ustawiamy wartosc domyslna
+    timezone = "CET-1CEST,M3.5.0/2,M10.5.0/3";
+    saveTimezone(timezone);
+    Serial.println("debug SD -> Pliku timezone.txt, nie istnieje");
+  }
+}
+
+
+
+
+
+
 //####################################################################################### OBSŁUGA POWER OFF / SLEEP ####################################################################################### //
 
+// ---- FUNKCJA WYSWIETLA NAPIS NA SRODKU OLEDa duzą czcionka -----
 void displayCenterBigText(String stringText, int stringText_Y)
 {
   u8g2.setContrast(displayBrightness); // Ustawiamy maksymalną jasnosc
   u8g2.setFont(u8g2_font_fub14_tr);
-  int stringTextWidth = u8g2.getStrWidth(stringText.c_str()); // Liczy pozycje aby wyswietlic stationName na wycentrowane środku
+  int stringTextWidth = u8g2.getStrWidth(stringText.c_str()); // Liczy pozycje aby wyswietlic TEXT na środku
   int stringText_X = (SCREEN_WIDTH - stringTextWidth) / 2;
   u8g2.clearBuffer();
   u8g2.drawStr(stringText_X, stringText_Y, stringText.c_str());     
@@ -6449,63 +7543,6 @@ void sleepTimer()
 
     }
   }
-}
-
-void powerOffAnimation2() 
-{
-  int width = u8g2.getDisplayWidth();
-  int height = u8g2.getDisplayHeight();
-  const int totalFrames = 100;
-  const int numColumns = 16; // liczba kolumn „Matrixa”
-
-  // Tablica przechowująca aktualną pozycję każdej kolumny
-  int colY[numColumns];
-  int colSpeed[numColumns];
-
-  // Inicjalizacja kolumn
-  for (int i = 0; i < numColumns; i++) 
-  {
-    colY[i] = random(-height, 0);    // start nad ekranem
-    colSpeed[i] = random(1, 4);      // różna prędkość spadania
-  }
-
-  // Animacja
-  for (int frame = 0; frame < totalFrames; frame++) 
-  {
-    u8g2.clearBuffer();
-    for (int i = 0; i < numColumns; i++) 
-    {
-      int x = i * (width / numColumns); // pozycja kolumny w poziomie
-      int y = colY[i];
-
-      // Rysujemy kilka bloków w dół w kolumnie, jak „kaskada”
-      for (int k = 0; k < 6; k++) 
-      {
-        int yy = y - k * 2; // odległość między blokami
-        if (yy >= 0 && yy < height) 
-        {
-          u8g2.drawPixel(x, yy);
-        }
-      }
-
-      // przesunięcie kolumny w dół
-      colY[i] += colSpeed[i];
-  
-      // reset kolumny, jeśli wypadnie poza ekran
-      if (colY[i] > height + 6 * 2) 
-      {
-        colY[i] = random(-height, 0);
-        colSpeed[i] = random(1, 4);
-      }
-    }
-
-    u8g2.sendBuffer();
-    delay(25);
-  }
-
-  // Całkowite wygaszenie ekranu
-  u8g2.clearBuffer();
-  u8g2.sendBuffer();
 }
 
 
@@ -6675,20 +7712,31 @@ void powerOffClock()
   u8g2.sendBuffer();
 }
 
-void prePowerOff()
+void powerOff()
 {
-  displayCenterBigText("POWER OFF",36);
-  //displayActive = true;
+  
+  // ---- WYSWIETLAMY NAPIS POWER OFF na srodku ----
+  displayCenterBigText("POWER OFF",36); // Tekst, pozycja Y
+  
+  // ---- ZAMYKAMY CALY OBIEKT AUDIO ----
   ws.closeAll();
   if (!volumeMute && f_volumeFadeOn) {volumeFadeOut(volumeSleepFadeOutTime);}
   audio.setVolume(0);
   audio.stopSong();
   delay(1000);
+  
+  // ---- ZAPIS OSTATNIEGO NR.STACJI, NR.BANKU, POZIOMU VOLUME jesli funkcja saveAlwasy wylaczona ----
+  if (!f_saveVolumeStationAlways) {saveVolumeOnSD(); saveStationOnSD();}
+  
+  
+  // ---- ANIMACJA POWER OFF, jesli wlaczona ----
   if (f_powerOffAnimation) {powerOffAnimation(); u8g2.clearBuffer();}
   
+
+  // ---- ZEGAR W TRYBIE POWER OFF pierwsze wywloane celem synch. ntp----
   if (f_displayPowerOffClock)
   {
-    u8g2.setPowerSave(0);
+    u8g2.setPowerSave(0);  // Jesli zegar wlaczony to nie przelaczamy OLEDa w tryb power save
     powerOffClock();
   } 
   // Wyłącz ekran jesli zegar ma byc wyłaczony
@@ -6698,133 +7746,201 @@ void prePowerOff()
   } 
   
   delay(25);
-  // -------- ZERUJEMY SLEEP TIMER ------------------
+  
+  // ----- ZERUJEMY SLEEP TIMER -----
   sleepTimerValueSet = 0;
   sleepTimerValueCounter = 0;
   f_displaySleepTimeSet = false;
   f_sleepTimerOn = false;
   f_displaySleepTime = false;
   timer3.detach();
-}
 
-void powerOff()
-{
-    f_powerOff = true;
-    Serial.println("debug Power -> Usypiam ESP, power off");
+  f_powerOff = true; 
+  Serial.println("debug Power -> Usypiam ESP, power off");
 
-    // -------------- WYŁACZAMY PERYFERIA ------------------
-    WiFi.mode(WIFI_OFF);
-    btStop();
-    Serial.end();
+  // -------------- WYŁACZAMY PERYFERIA ------------------
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  Serial.end();
+    
+  // ---- USTAWIAMY PRZYCISKI NA ENKODERACH do POWER ON -----
+  
+  pinMode(SW_PIN2, INPUT_PULLUP);
+  
+  #ifdef SW_POWER
+  pinMode(SW_POWER, INPUT_PULLUP);
+  #endif
+  
+  #ifdef twoEncoders
+  pinMode(SW_PIN1, INPUT_PULLUP);
+  #endif
 
-    pinMode(SW_POWER, INPUT_PULLUP);
-    #ifdef twoEncoders
-    pinMode(SW_PIN1, INPUT_PULLUP);
-    #endif
-
-    // --------LED STANDBY (przygotowanie pod przekaźnik) ----------------
-    pinMode(STANDBY_LED, OUTPUT);
-    digitalWrite(STANDBY_LED, HIGH);
+  // --------LED STANDBY (przygotowanie pod przekaźnik) ----------------
+  pinMode(STANDBY_LED, OUTPUT);
+  digitalWrite(STANDBY_LED, HIGH); // Dla LED właczonego w trybie Power ON
+  //digitalWrite(STANDBY_LED, LOW); // Dla LED wylaczonego w trybie Power ON
 
     
-    // ---------------- USTAWIAMY WAKEUP ----------------    
-    #ifdef twoEncoders
-    gpio_wakeup_enable((gpio_num_t)SW_PIN1, GPIO_INTR_LOW_LEVEL);
-    #endif
-    gpio_wakeup_enable((gpio_num_t)SW_POWER, GPIO_INTR_LOW_LEVEL);
-    esp_sleep_enable_gpio_wakeup();
+  // ---------------- USTAWIAMY WAKEUP ----------------    
+  #ifdef twoEncoders
+  gpio_wakeup_enable((gpio_num_t)SW_PIN1, GPIO_INTR_LOW_LEVEL);
+  #endif
+    
+  #ifdef SW_POWER
+  gpio_wakeup_enable((gpio_num_t)SW_POWER, GPIO_INTR_LOW_LEVEL);
+  #endif
+  
+  gpio_wakeup_enable((gpio_num_t)SW_PIN2, GPIO_INTR_LOW_LEVEL);
+  
 
-    while (f_powerOff)
+  esp_sleep_enable_gpio_wakeup();
+
+  while (f_powerOff)
+  {
+    // ---------------- RESET STANÓW IR ----------------
+    bit_count = 0;
+    ir_code = 0;
+    delay(10);
+
+    // ---------------- DEZAKTYWACJA PERYFERIOW i AKTYWACJA ZEGARA (jesli właczony) ----------------
+    if (f_displayPowerOffClock) 
     {
-        // ---------------- RESET STANÓW IR ----------------
-        bit_count = 0;
-        ir_code = 0;
-        delay(10);
-
-        // ---------------- DEZAKTYWACJA PERYFERIOW i AKTYWACJA ZEGARA (jesli właczony) ----------------
-        if (f_displayPowerOffClock) 
-        {
-          powerOffClock();
-          esp_sleep_enable_timer_wakeup(micros2nextMinute); 
-        }
-        else 
-        {
-          u8g2.setPowerSave(1);
-        }
-         
-        // ---------------- USTAWIAMY WAKEUP ----------------    
-        gpio_wakeup_enable((gpio_num_t)recv_pin, GPIO_INTR_LOW_LEVEL);
-
-        // ---------------- SLEEP ----------------
-        delay(10);
-        esp_light_sleep_start();
-
-        // ------------- TU SIĘ OBUDZIMY ----------------
-
-        // Jesli obudził nas timer to robimy aktulizacje zegera i wracamy na początek petli while
-        esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-        if (cause == ESP_SLEEP_WAKEUP_TIMER)
-        {
-          if (f_displayPowerOffClock) {powerOffClock();}
-          delay(5);
-          continue;   // wraca do while – ESP idzie znowu spać
-        }
-
-        // Konfiguracja przerwania IR
-        attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
-        
-        //pinMode(SW_PIN2, INPUT_PULLUP);  
-        delay(100); // stabilizacja
-        
-             
-        // Analiza IR
-        ir_code = reverse_bits(ir_code, 32);
-        uint8_t CMD  = (ir_code >> 16) & 0xFF;
-        uint8_t ADDR = ir_code & 0xFF;
-        ir_code = (ADDR << 8) | CMD;
-   
-        
-
-        // Warunek POWER UP
-        #ifdef twoEncoders
-        bool POWER_UP =
-            (bit_count == 32 && ir_code == rcCmdPower && f_powerOff) ||
-            (digitalRead(SW_POWER) == LOW) ||
-            (digitalRead(SW_PIN1) == LOW);
-        #else
-        bool POWER_UP =
-            (bit_count == 32 && ir_code == rcCmdPower && f_powerOff) ||
-            (digitalRead(SW_POWER) == LOW);
-        #endif    
-
-        // ------------------ WSTAEMY po poprawny rozpoznaiu kodu (lub nie, else) -----------------
-        if (POWER_UP)
-        {
-            detachInterrupt(digitalPinToInterrupt(recv_pin));
-            esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-          
-            f_powerOff = false;
-            displayActive = true;
-
-            u8g2.setPowerSave(0);
-            displayCenterBigText("POWER ON", 36);
-            
-            // ------------ LED STANDBY -----------
-            pinMode(STANDBY_LED, OUTPUT);
-            digitalWrite(STANDBY_LED, LOW);
-            
-            delay(800);
-
-            // Twardy restart
-            REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST);
-            break;
-        }
-
-        // Nie to nie POWER_UP -> rozpinamy przerwanie IR
-        detachInterrupt(digitalPinToInterrupt(recv_pin));
+      powerOffClock();
+      esp_sleep_enable_timer_wakeup(micros2nextMinute); 
     }
+    else 
+    {
+      u8g2.setPowerSave(1);
+    }
+      
+    // ---------------- USTAWIAMY WAKEUP ----------------    
+    gpio_wakeup_enable((gpio_num_t)recv_pin, GPIO_INTR_LOW_LEVEL);
+
+    // ---------------- SLEEP ----------------
+    delay(10);
+    esp_light_sleep_start();
+
+    // ------------- TU SIĘ OBUDZIMY ----------------
+
+    // Jesli obudził nas timer to robimy aktulizacje zegera i wracamy na początek petli while
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    if (cause == ESP_SLEEP_WAKEUP_TIMER)
+    {
+      if (f_displayPowerOffClock) {powerOffClock();}
+      delay(5);
+      continue;   // wraca do while – ESP idzie znowu spać
+    }
+
+    // Konfiguracja przerwania IR
+    attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
+    delay(100); // stabilizacja
+                
+    // Analiza IR
+    ir_code = reverse_bits(ir_code, 32);
+    uint8_t CMD  = (ir_code >> 16) & 0xFF;
+    uint8_t ADDR = ir_code & 0xFF;
+    ir_code = (ADDR << 8) | CMD;
+  
+    // Warunek POWER UP
+    #ifdef twoEncoders
+    bool POWER_UP =
+        (bit_count == 32 && ir_code == rcCmdPower && f_powerOff) ||
+        (digitalRead(SW_POWER) == LOW) ||
+        (digitalRead(SW_PIN1) == LOW) ||
+        (digitalRead(SW_PIN2) == LOW);
+    #else
+    bool POWER_UP =
+        (bit_count == 32 && ir_code == rcCmdPower && f_powerOff) ||
+        (digitalRead(SW_POWER) == LOW) ||
+        (digitalRead(SW_PIN2) == LOW);
+    #endif    
+
+    // ------------------ WSTAEMY po poprawny rozpoznaiu kodu (lub nie, else) -----------------
+    if (POWER_UP)
+    {
+      detachInterrupt(digitalPinToInterrupt(recv_pin));
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+    
+      f_powerOff = false;
+      displayActive = true;
+
+      u8g2.setPowerSave(0);
+      displayCenterBigText("POWER ON", 36);
+      
+      // ------------ LED STANDBY -----------
+      pinMode(STANDBY_LED, OUTPUT);
+      //digitalWrite(STANDBY_LED, HIGH); // Dla LED właczonego w trybie Power ON
+      digitalWrite(STANDBY_LED, LOW); // Dla LED wylaczonego w trybie Power ON
+      
+      delay(800);
+
+      // Twardy restart
+      REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST);
+      break;
+    }
+
+    // Nie to nie POWER_UP -> rozpinamy przerwanie IR
+    detachInterrupt(digitalPinToInterrupt(recv_pin));
+  }
 }
 
+// ---- ŁADOWANIE LOGO STARTOWEGO jesli plik istnieje ----
+bool loadXBM(const char* filename) 
+{
+  File logo = STORAGE.open(filename);
+  if (!logo) 
+  {
+    Serial.println("Debug LOGO -> Brak pliku logo");
+    return false;
+  }
+
+  bool insideData = false;
+  int index = 0;
+
+  while (logo.available() && index < LOGO_SIZE) 
+  {
+    char c = logo.read();
+    // Szukamy "0x"
+    if (c == '0' && logo.peek() == 'x') 
+    {
+      logo.read(); // pomin 'x'
+      // wczytaj 2 cyfry hex
+      char hex1 = logo.read();
+      char hex2 = logo.read();
+
+      // konwersja hex -> bajt
+      char hexStr[3] = {hex1, hex2, 0};
+      logo_bits[index++] = strtol(hexStr, NULL, 16);
+    }
+  }
+  logo.close();
+  Serial.println("Debug LOGO -> Logo zaladowane poprawnie.");
+  return true;
+}
+
+void startOta()
+{
+  timeDisplay = false;
+  displayActive = true;
+  fwupd = true;
+  
+  ws.closeAll();
+  audio.stopSong();
+  delay(250);
+  if (!f_saveVolumeStationAlways){saveStationOnSD(); saveVolumeOnSD();}
+  
+  for (int i = 0; i < 3; i++) 
+  {
+    u8g2.clearBuffer();
+    delay(25);
+  }        
+  unsigned long now = millis();
+  u8g2.clearBuffer();
+  u8g2.setDrawColor(1);
+  u8g2.setFont(spleen6x12PL);     
+  u8g2.setCursor(5, 12); u8g2.print("Evo Radio, OTA Firwmare Update");
+  u8g2.sendBuffer();
+}
 
 //####################################################################################### SETUP ####################################################################################### //
 
@@ -6884,6 +8000,24 @@ void setup()
     prev_CLK_state1 = digitalRead(CLK_PIN1);  // Odczytaj początkowy stan pinu CLK enkodera
   #endif  
 
+  // ----------------- SW_POWER dodatkowy (jesli włączony) -----------------
+  #ifdef SW_POWER
+  pinMode(SW_POWER, INPUT_PULLUP);
+  #endif
+
+  // --------LED STANDBY dla stanu HIGH w trybie Power ON ----------------
+  pinMode(STANDBY_LED, OUTPUT);
+  //digitalWrite(STANDBY_LED, HIGH); // Dla LED właczonego w trybie Power ON
+  digitalWrite(STANDBY_LED, LOW); // Dla LED wylaczonego w trybie Power ON
+
+  // ----------------- LED CS karty SD - klon (jesli włączony) -----------------
+  #ifdef SD_LED
+  pinMode(SD_LED, OUTPUT);
+   // PIN, CLONE PIN, INVERTED, EN_INV -Klonowanie sygnału CS kontrolera VirtualSPI (VSPI) na LED aby miec informacje o aktywnosci karty z czytnika z tyłu PCB
+  gpio_matrix_out(SD_LED, SPI3_CS0_OUT_IDX, false, false);
+  #endif
+
+
   // ----------------- IR ODBIORNIK - Konfiguracja pinu -----------------
   pinMode(recv_pin, INPUT);
   attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
@@ -6904,7 +8038,7 @@ void setup()
   // Inicjalizuj wyświetlacz i odczekaj 250 milisekund na włączenie
   u8g2.begin();
   delay(250);
-
+  
   // ----------------- KARTA SD / PAMIEC SPIFFS - Inicjalizacja -----------------
   if (!STORAGE_BEGIN())
   {
@@ -6924,9 +8058,22 @@ void setup()
 
   if ((esp_reset_reason() != ESP_RST_POWERON) || (!f_sleepAfterPowerFail))
   {
-    u8g2.drawXBMP(0, 5, notes_width, notes_height, notes);  // obrazek - nutki
+    u8g2.clearBuffer();
+    if (!loadXBM("/logo.xbm")) 
+    {
+      Serial.println("Start LOGO loading from Storage FAILED");
+      u8g2.drawXBMP(0, 5, notes_width, notes_height, notes);  // obrazek - nutki
+    }
+    else
+    {
+      u8g2.drawXBMP(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, logo_bits); // obrazek - logo z pamieci
+      u8g2.sendBuffer();
+      delay(1000);
+    }   
     u8g2.setFont(u8g2_font_fub14_tf);
-    u8g2.drawStr(38, 17, "Evo Internet Radio");
+    //u8g2.clearBuffer();
+    //u8g2.drawStr(38, 17, "Evo Internet Radio");
+    u8g2.drawStr(38, 14, "Evo Internet Radio");
     u8g2.setFont(spleen6x12PL);
     u8g2.drawStr(208, 62, softwareRev);
     u8g2.sendBuffer();
@@ -6956,7 +8103,7 @@ void setup()
   }
   
   u8g2.setFont(spleen6x12PL);
-  if ((esp_reset_reason() == ESP_RST_POWERON) && (f_sleepAfterPowerFail)) {u8g2.drawStr(5, 50, "Wakeup after power loss");}
+  if ((esp_reset_reason() == ESP_RST_POWERON) && (f_sleepAfterPowerFail)) {u8g2.drawStr(5, 50, "Wakeup after power loss, syncing NTP");}
   u8g2.drawStr(5, 62, "Connecting to network...    ");
 
   u8g2.sendBuffer();
@@ -6978,7 +8125,8 @@ void setup()
   readAdcConfig();           // Odczyt konfiguracji klawitury ADC
   readRemoteControlConfig(); // Odczyt konfiguracji pilota IR
   assignRemoteCodes();       // Przypisanie kodów pilota IR
-  
+  readTimezone();
+
   audio.setVolumeSteps(maxVolume);
   //audio.setVolume(0);                  // Ustaw głośność na podstawie wartości zmiennej volumeValue w zakresie 0...21
   
@@ -7011,10 +8159,11 @@ void setup()
     
     if (MDNS.begin(hostname)) { Serial.println("mDNS wystartowal, adres: " + String(hostname) + ".local w przeglądarce"); MDNS.addService("http", "tcp", 80);}
         
-    configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer1, ntpServer2);
+    //configTzTime("CET-1CEST,M3.5.0/2,M10.5.0/3", ntpServer1, ntpServer2);
+    configTzTime(timezone.c_str(), ntpServer1, ntpServer2);
     struct tm timeinfo;
     int retry = 0;
-    Serial.println("debug RTC -> synchronizacja NTP START");
+    Serial.println("debug RTC -> synchronizacja NTP pierwszy raz od startu");
     while (!getLocalTime(&timeinfo) && retry < 10) 
     {
       Serial.println("debug RTC -> Czekam na synchronizację czasu NTP...");
@@ -7033,7 +8182,7 @@ void setup()
       Serial.println("debug PWR -> power OFF po powrocie zasilania");
       Serial.print("debug PWR -> Funkcja zegara f_displayPowerOffClock: ");
       Serial.println(f_displayPowerOffClock);
-      prePowerOff();
+      //prePowerOff();
       powerOff();
     }
 
@@ -7064,7 +8213,8 @@ void setup()
       
       String finalhtml = String(index_html) + html;  // Składamy cześć stałą html z częscią generowaną dynamicznie
       //request->send_P(200, "text/html", finalhtml.c_str());
-      request->send(200, "text/html", finalhtml.c_str());
+      //request->send(200, "text/html", finalhtml.c_str());
+      request->send(200, "text/html", finalhtml);
     });
 
     server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -7088,10 +8238,11 @@ void setup()
       request->send(200, "text/html", html);
     });
     
-    server.on("/firmwareota", HTTP_POST, [](AsyncWebServerRequest *request) {
+    server.on("/firmwareota", HTTP_POST, [](AsyncWebServerRequest *request) 
+    {
       request->send(200, "text/plain", "Update done");
-      },
-     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) 
+    },
+    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) 
     {
 
       static size_t total = 0;
@@ -7128,7 +8279,7 @@ void setup()
       else 
       {
         total += len;
-        
+          
         // Wyświetlaj pasek postępu co 300 ms
         unsigned long now = millis();
         if (now - lastPrint >= 200 || final) 
@@ -7141,7 +8292,6 @@ void setup()
           lastPrint = now;
         }
       }
-
       if (final) 
       {
         if (Update.end(true)) 
@@ -7187,6 +8337,8 @@ void setup()
       ws.closeAll();
       audio.stopSong();
       delay(250);
+      if (!f_saveVolumeStationAlways){saveStationOnSD(); saveVolumeOnSD();}
+      
       for (int i = 0; i < 3; i++) 
       {
         u8g2.clearBuffer();
@@ -7199,6 +8351,7 @@ void setup()
       u8g2.setCursor(5, 12); u8g2.print("Evo Radio, OTA Firwmare Update");
       u8g2.sendBuffer();
 
+      /*
       String html = "";
       html += "<!DOCTYPE html>";
       html += "<html lang='en'>";
@@ -7269,14 +8422,25 @@ void setup()
       html += "</script>";
       html += "</body>";
       html += "</html>";
+      */
 
-      request->send(200, "text/html", html);
+      //request->send(200, "text/html", html);
+      request->send(200, "text/html", String(ota_html));
       //request->send(SD, "/ota.html", "text/html"); //"application/octet-stream");
     });
 
     server.on("/page1", HTTP_GET, [](AsyncWebServerRequest *request)
     { // Strona do celow testowych ladowana z karty SD
-      request->send(SD, "/page1.html", "text/html"); //"application/octet-stream");
+      request->send(STORAGE, "/page1.html", "text/html"); //"application/octet-stream");
+    });
+
+    server.on("/playurl", HTTP_GET, [](AsyncWebServerRequest *request)
+    { 
+      //String html =""; 
+      //String finalhtml = String(urlplay_html);  // Składamy cześć stałą html z częscią generowaną dynamicznie
+      //request->send(200, "text/html", finalhtml);
+      request->send(200, "text/html", String(urlplay_html));
+      //request->send(STORAGE, "/playurl.html", "text/html");
     });
 
     server.on("/edit", HTTP_GET, [](AsyncWebServerRequest *request) 
@@ -7377,42 +8541,44 @@ void setup()
       });
 
       server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
-      //String html = String(config_html);
+        //String html = String(config_html);
         String html = FPSTR(config_html);  // czyta z PROGMEM
 
-      // liczby
-      html.replace(F("%D10"), String(vuRiseSpeed));
-      html.replace(F("%D11"), String(vuFallSpeed));
-      html.replace(F("%D12"), String(dimmerSleepDisplayBrightness));
-      
-      html.replace(F("%D1"), String(displayBrightness));
-      html.replace(F("%D2"), String(dimmerDisplayBrightness));
-      html.replace(F("%D3"), String(displayAutoDimmerTime));
-      html.replace(F("%D4"), String(vuMeterMode));
-      html.replace(F("%D5"), String(encoderFunctionOrder));
-      html.replace(F("%D6"), String(displayMode));
-      html.replace(F("%D7"), String(vuMeterRefreshTime));
-      html.replace(F("%D8"), String(scrollingRefresh));
-      html.replace(F("%D9"), String(displayPowerSaveTime));
+        // liczby
+        html.replace(F("%D10"), String(vuRiseSpeed));
+        html.replace(F("%D11"), String(vuFallSpeed));
+        html.replace(F("%D12"), String(dimmerSleepDisplayBrightness));
+        
+        html.replace(F("%D1"), String(displayBrightness));
+        html.replace(F("%D2"), String(dimmerDisplayBrightness));
+        html.replace(F("%D3"), String(displayAutoDimmerTime));
+        html.replace(F("%D4"), String(vuMeterMode));
+        html.replace(F("%D5"), String(encoderFunctionOrder));
+        html.replace(F("%D6"), String(displayMode));
+        html.replace(F("%D7"), String(vuMeterRefreshTime));
+        html.replace(F("%D8"), String(scrollingRefresh));
+        html.replace(F("%D9"), String(displayPowerSaveTime));
 
-      //Opcje CheckBox
-      html.replace(F("%S11_checked"), maxVolumeExt ? " checked" : "");
-      html.replace(F("%S13_checked"), vuPeakHoldOn ? " checked" : "");
-      html.replace(F("%S15_checked"), vuSmooth ? " checked" : "");
-      html.replace(F("%S17_checked"), stationNameFromStream ? " checked" : "");
-      html.replace(F("%S19_checked"), f_displayPowerOffClock ? " checked" : "");
-      html.replace(F("%S21_checked"), f_sleepAfterPowerFail ? " checked" : "");
-      html.replace(F("%S22_checked"), f_volumeFadeOn ? " checked" : "");
-      
-      html.replace(F("%S1_checked"), displayAutoDimmerOn ? " checked" : "");
-      html.replace(F("%S3_checked"), timeVoiceInfoEveryHour ? " checked" : "");
-      html.replace(F("%S5_checked"), vuMeterOn ? " checked" : "");
-      html.replace(F("%S7_checked"), adcKeyboardEnabled ? " checked" : "");
-      html.replace(F("%S9_checked"), displayPowerSaveEnabled ? " checked" : "");
-            
+        //Opcje CheckBox
+        html.replace(F("%S11_checked"), maxVolumeExt ? " checked" : "");
+        html.replace(F("%S13_checked"), vuPeakHoldOn ? " checked" : "");
+        html.replace(F("%S15_checked"), vuSmooth ? " checked" : "");
+        html.replace(F("%S17_checked"), stationNameFromStream ? " checked" : "");
+        html.replace(F("%S19_checked"), f_displayPowerOffClock ? " checked" : "");
+        html.replace(F("%S21_checked"), f_sleepAfterPowerFail ? " checked" : "");
+        html.replace(F("%S22_checked"), f_volumeFadeOn ? " checked" : "");
+        html.replace(F("%S23_checked"), f_saveVolumeStationAlways ? " checked" : "");
+        
 
-      request->send(200, "text/html", html);
-    });
+        html.replace(F("%S1_checked"), displayAutoDimmerOn ? " checked" : "");
+        html.replace(F("%S3_checked"), timeVoiceInfoEveryHour ? " checked" : "");
+        html.replace(F("%S5_checked"), vuMeterOn ? " checked" : "");
+        html.replace(F("%S7_checked"), adcKeyboardEnabled ? " checked" : "");
+        html.replace(F("%S9_checked"), displayPowerSaveEnabled ? " checked" : "");
+              
+
+        request->send(200, "text/html", html);
+      });
 
     server.on("/adc", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
@@ -7530,6 +8696,7 @@ void setup()
       f_displayPowerOffClock     = request->hasParam("f_displayPowerOffClock", true);
       f_sleepAfterPowerFail      = request->hasParam("f_sleepAfterPowerFail", true);
       f_volumeFadeOn             = request->hasParam("f_volumeFadeOn", true);
+      f_saveVolumeStationAlways  = request->hasParam("f_saveVolumeStationAlways", true);
 
       // Jeśli parametr istnieje checkbox był zaznaczony to TRUE
       // Jeśli go nie ma checkbox nie był zaznaczony to FALSE
@@ -7549,8 +8716,6 @@ void setup()
       //request->send(200, "text/html","<h1>Config Updated!</h1><a href='/menu'>Go Back</a>");
       request->send(200, "text/html","<!DOCTYPE html><html><head><meta http-equiv='refresh' content='2;url=/'></head><body><h1>Config Updated!</h1></body></html>");
     });
-
-    
     
     server.on("/toggleAdcDebug", HTTP_POST, [](AsyncWebServerRequest *request) 
     {
@@ -7574,23 +8739,15 @@ void setup()
         
     });
 
+    
     server.on("/mute", HTTP_POST, [](AsyncWebServerRequest *request) 
     {
-      volumeMute = !volumeMute; // Przełączanie flagi Mute
-      if (volumeMute == true) 
-      {
-        audio.setVolume(0);   
-      }
-      else if (volumeMute == false)
-      {
-        audio.setVolume(volumeValue);
-      }
-      //Serial.println("debug web -> Mute ON/OFF ze strony www");
-      displayRadio();
-      wsVolumeChange(volumeValue);       
-
+      ir_code = rcCmdMute; // Przypisujemy kod polecenia z pilota
+      bit_count = 32; // ustawiamy informacje, ze mamy pelen kod NEC do analizy 
+      calcNec();  // przeliczamy kod pilota na kod oryginalny pełen kod NEC 
       request->send(204);       // brak odpowiedzi (204)    
     });
+    
 
     server.on("/view", HTTP_GET, [](AsyncWebServerRequest *request) 
     {
@@ -7747,8 +8904,7 @@ void setup()
       }  
     });
 
-    server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) 
-    {
+    server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request) {
       String html = String(info_html);
 
       uint64_t chipid = ESP.getEfuseMac();
@@ -7764,11 +8920,39 @@ void setup()
       if (useSD) html.replace("%D7", String("SD").c_str()); 
       else html.replace("%D7", String("SPIFFS").c_str()); 
       html.replace("%D0", chipStr); 
-
+      f_callInfo = true;
+      
       request->send(200, "text/html", html);
 
     });
 
+    server.on("/timezone", HTTP_GET, [](AsyncWebServerRequest *request){
+      //request->send(STORAGE, "/timezone.html", "text/html");
+      request->send(200, "text/html", String(timezone_html));
+    });
+
+    server.on("/getTZ", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send(200, "text/plain", timezone);
+    });
+
+    server.on("/setTZ", HTTP_GET, [](AsyncWebServerRequest *request){
+      if (!request->hasParam("value")) 
+      {
+        request->send(400, "text/plain", "Missing timezone value");
+        return;
+      }
+
+      String newTZ = request->getParam("value")->value();
+      newTZ.trim();
+      timezone = newTZ;
+
+      saveTimezone(newTZ);
+
+      //configTzTime(timezone.c_str(), "pool.ntp.org", "time.nist.gov");
+      configTzTime(timezone.c_str(), ntpServer1, ntpServer2);
+      
+      request->send(200, "text/plain", "OK");
+    });
 
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
@@ -7835,7 +9019,7 @@ void setup()
           
           if (ir_code == rcCmdPower) 
           {     
-            prePowerOff();
+            //prePowerOff();
             powerOff();
           }
           else if (ir_code == rcCmdBack)
@@ -7861,9 +9045,20 @@ void setup()
         }
         ir_code = 0;
         bit_count = 0;
-        attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);
-      
+        attachInterrupt(digitalPinToInterrupt(recv_pin), pulseISR, CHANGE);  
       } 
+
+      /*---------------------  FUNKCJA INFORMACJA O PODLACZENI i RESET ---------------------*/ 
+      if (WiFi.status() == WL_CONNECTED)
+      {
+        displayCenterBigText("CONNECTED",36);
+        currentIP = WiFi.localIP().toString();
+        showIP(1,55);
+        u8g2.drawStr(1, 63, "Reseting...");
+        u8g2.sendBuffer();
+        delay(2000);
+        REG_WRITE(RTC_CNTL_OPTIONS0_REG, RTC_CNTL_SW_SYS_RST); // Restart pełen sprzętowy jak z przycisku reset
+      }
     
     } // Nieskonczona petla z procesowaniem Wifi aby nie przejsc do ekranu radia gdy nie ma Wifi
   }
@@ -7899,10 +9094,15 @@ void loop()
   if (encoderFunctionOrder == 0) { handleEncoder2VolumeStationsClick(); } 
   else if (encoderFunctionOrder == 1) { handleEncoder2StationsVolumeClick(); }
   
+  // Obsługa przycisku Power ON/OFF
+  #ifdef SW_POWER
+    if (digitalRead(SW_POWER) == LOW) {powerOff();}
+  #endif
+
  /*---------------------  FUNKCJA BACK / POWROTU ze wszystkich opcji Menu, Ustawien, itd ---------------------*/
   if ((fwupd == false) && (displayActive) && (millis() - displayStartTime >= displayTimeout))  // Przywracanie poprzedniej zawartości ekranu po 6 sekundach
   {
-    if (volumeBufferValue != volumeValue) { saveVolumeOnSD(); }    
+    if (volumeBufferValue != volumeValue && f_saveVolumeStationAlways) { saveVolumeOnSD(); }    
     if ((rcInputDigitsMenuEnable == true) && (station_nr != stationFromBuffer)) { changeStation(); }  // Jezeli nastapiła zmiana numeru stacji to wczytujemy nową stacje
     
     displayDimmer(0); 
@@ -8060,7 +9260,7 @@ void loop()
       {  
         if ((volumeSet == true) && (volumeBufferValue != volumeValue))
         {
-          saveVolumeOnSD();
+          if (f_saveVolumeStationAlways) {saveVolumeOnSD();}
           volumeSet = false;
         }
         
@@ -8107,7 +9307,7 @@ void loop()
       {  
         if ((volumeSet == true) && (volumeBufferValue != volumeValue))
         {
-          saveVolumeOnSD();
+          if (f_saveVolumeStationAlways) {saveVolumeOnSD();}
           volumeSet = false;
         }
         
@@ -8224,9 +9424,15 @@ void loop()
         }
         if ((bankMenuEnable == false) && (equalizerMenuEnable == false) && (volumeSet == false))
         { 
-          
-          displayDimmer(!displayDimmerActive); // Dimmer OLED
-          Serial.println("Właczono display Dimmer rcCmdDirect");
+          if (displayMode == 4) // Jesli jestesmy w display Mode 4 czyli duzy VU wsazowkowy to mozna właczyc buffor audio print.
+          {
+            debugAudioBuffor=!debugAudioBuffor;
+          }
+          else
+          {
+            displayDimmer(!displayDimmerActive); // Dimmer OLED
+            Serial.println("Właczono display Dimmer rcCmdDirect");
+          }
         }
       }      
       else if (ir_code == rcCmdSrc) 
@@ -8234,47 +9440,19 @@ void loop()
         displayMode++;
         if (displayMode > displayModeMax) {displayMode = 0;}
         displayRadio();
-        //u8g2.sendBuffer();
         clearFlags();
         ActionNeedUpdateTime = true;
       }
-      else if (ir_code == rcCmdRed) 
-      {     
-        //vuMeterMode = !vuMeterMode;
-        // vuSmooth = !vuSmooth;
-        //vuMeterOn = !vuMeterOn;
-        //displayRadio();
-        //clearFlags();
-        //ActionNeedUpdateTime = true;
-        
-        prePowerOff();
-        powerOff();
-
-             
-        //f_requestVoiceTimePlay = true;
-        //voiceTime();
-      
-      }
-      else if (ir_code == rcCmdPower) 
-      {     
-        prePowerOff();
-        powerOff();
-      }
-      else if (ir_code == rcCmdGreen) 
-      {
-        sleepTimerSet();             
-      }   
+      else if (ir_code == rcCmdRed)   {powerOff();}
+      else if (ir_code == rcCmdPower) {powerOff();}
+      else if (ir_code == rcCmdGreen) {sleepTimerSet();}   
       else if (ir_code == rcCmdBankMinus) 
       {
-        if (bankMenuEnable == true)
-        {
-          bank_nr--;
-          if (bank_nr < 1) 
-          {
-            bank_nr = bank_nr_max;
-          }
-        }  
-        
+        if (bankMenuEnable == true) 
+        { 
+          bank_nr--; 
+          if (bank_nr < 1) {bank_nr = bank_nr_max;}
+        }       
         bankMenuDisplay();
       }
       else if (ir_code == rcCmdBankPlus) 
@@ -8283,15 +9461,9 @@ void loop()
         if (bankMenuEnable == true)
         {
           bank_nr++;
-          if (bank_nr > bank_nr_max) 
-          {
-            bank_nr = 1;
-          }
+          if (bank_nr > bank_nr_max) {bank_nr = 1;}
         }       
-        bankMenuDisplay();
-        
-        //voiceTime();
-        //debugAudioBuffor=!debugAudioBuffor;
+        bankMenuDisplay();       
       }
      
       else if (ir_code == rcCmdAud) {displayEqualizer();}
@@ -8321,7 +9493,7 @@ void loop()
     // Serial.println(" DWORD");
   }
   
-
+  
   /*---------------------  FUNKCJA PETLI MILLIS SCROLLER / Odswiezanie VU Meter, Time, Scroller, OLED, WiFi ver. 1 ---------------------*/ 
   if ((millis() - scrollingStationStringTime > scrollingRefresh) && (displayActive == false)) 
   {
@@ -8336,21 +9508,6 @@ void loop()
         f_requestVoiceTimePlay = false;
         voiceTime();
       }
-
-      /* MARKED
-      // Powrót z voiceTime na wypadek nie wywołania funkcji audio EOF
-      if (resumePlay)
-      {
-        if (millis() - voiceTimeMillis > voiceTimeReturnTime)
-        {
-          ir_code = rcCmdOk; // Przypisujemy kod pilota - OK
-          bit_count = 32;
-          calcNec();        // Przeliczamy kod pilota na pełny kod NEC
-          resumePlay = false;
-        } 
-      }
-      */
-
 
       if (debugAudioBuffor == true) {bufforAudioInfo();}
       
@@ -8382,31 +9539,35 @@ void loop()
     {
       if (vuMeterOn)
       { 
-        switch (displayMode)
+        if (displayMode == 0) {vuMeterMode0();}
+        if (displayMode == 3) {vuMeterMode3();}
+        if (displayMode == 4) 
         {
-          case 0  : vuMeterMode0(); break;
-          case 3  : vuMeterMode3(); break;
-          case 4  : vuMeterMode4(); break;
+          vuMeterMode4(); 
+          if (debugAudioBuffor)
+          {
+            for (int i = 0; i < 10; i++) 
+            {
+              int y = 1 + (9 - i) * 6; 
+              if (audioBufferTime > i) { u8g2.drawBox(126, y, 8, 5);} else {u8g2.drawFrame(126, y, 8, 5);}
+            }
+          }
         }
       }
       else if (displayMode == 0) {showIP(1,47);} //y = vuRy
     }
-    else
+    else // Obsługa wyciszenia dzwięku, wprowadzamy napis MUTE na ekran
     {
       u8g2.setDrawColor(0);
-      switch (displayMode)
-        {
-          case 0  : u8g2.drawStr(0,48,   "> MUTED <");  break;
-          case 1  : u8g2.drawStr(200,47, "> MUTED <");  break;
-          case 2  : u8g2.drawStr(0,48,   "> MUTED <");  break;
-          case 3  : u8g2.drawStr(101,63, "> MUTED <");  break;
-          case 4  : vuMeterMode4(); u8g2.setFont(spleen6x12PL); u8g2.setDrawColor(0); u8g2.drawStr(103,57, "> MUTED <");  break;
-        }
+      if (displayMode == 0) {u8g2.drawStr(0,48, "> MUTED <");}
+      if (displayMode == 1) {u8g2.drawStr(200,47, "> MUTED <");}
+      if (displayMode == 2) {u8g2.drawStr(0,48, "> MUTED <");}
+      if (displayMode == 3) {u8g2.drawStr(101,63, "> MUTED <");}
+      if (displayMode == 4) {u8g2.setDrawColor(1); vuMeterMode4(); u8g2.setFont(spleen6x12PL); u8g2.setDrawColor(0); u8g2.drawStr(103,57, "> MUTED <");}
       u8g2.setDrawColor(1);
-    }
+    }  
 
-      
-    
+       
     if (urlToPlay == true) // Jesli web serwer ustawił flagę "odtwarzaj URL" to uruchamiamy funkcje odtwarzania z adresu URL wysłanego przez strone WWW
     {
       urlToPlay = false;
@@ -8416,7 +9577,9 @@ void loop()
     
     displayRadioScroller();  // wykonujemy przewijanie tekstu station stringi przygotowujemy bufor ekranu
     u8g2.sendBuffer();  // rysujemy całą zawartosc ekranu.
-   
+    
+    //if (f_callInfo) {f_callInfo = false; displayBasicInfo();}  
+    
   }
   //runTime2 = esp_timer_get_time();
   //runTime = runTime2 - runTime1;  
